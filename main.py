@@ -1,296 +1,268 @@
+import base64
 import os
+import time
 from pathlib import Path
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from typing import Any, Optional
+
+from fastapi import FastAPI, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 try:
-  from google import genai
+    from google import genai
+    from google.genai import types
 except ImportError:
-  genai = None
-
-app = FastAPI(
-    title="HAIDARA AI",
-    description="Assistant intelligent HAIDARA AI",
-    version="1.1.0",
-)
+    genai = None  # type: ignore[assignment]
+    types = None  # type: ignore[assignment]
 
 BASE_DIR = Path(__file__).resolve().parent
-app.mount(
-    "/static", StaticFiles(directory=BASE_DIR / "static"), name="static"
-)
+APP_DIR = BASE_DIR.parent
+
+app = FastAPI(title="HAIDARA AI")
+
+static_dir = APP_DIR / "static"
+if not static_dir.exists():
+    static_dir = BASE_DIR / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+MODELS_TO_TRY = [
+    "gemini-3.8-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+]
 
 SYSTEM_INSTRUCTION = (
-    "Tu es HAIDARA AI, un assistant intelligent, clair, pédagogique et"
-    " précis. Réponds en français par défaut. Pour les questionnaires, QCM,"
-    " exercices ou dissertations, donne la bonne réponse ou la démarche"
-    " complète, explique pourquoi, et structure avec des titres ou listes"
-    " quand cela aide à la compréhension."
+    "Tu es HAIDARA AI, un assistant intelligent de haut niveau. "
+    "Réponds toujours en français (sauf demande contraire) de façon claire, complète, "
+    "structurée et détaillée comme Gemini : utilise des titres clairs, des listes à puces, "
+    "du gras sur les notions clés et des exemples concrets quand c'est utile."
 )
 
 
-class MessageEntree(BaseModel):
-  message: str
+class ChatRequest(BaseModel):
+    message: str
 
 
-def reponse_locale_secours(texte: str) -> str:
-  m = texte.strip()
-  bas = m.lower()
-  if not m:
-    return "Écris-moi une question ou un questionnaire pour que je puisse t'aider."
-  if any(s in bas for s in ["bonjour", "salut", "bonsoir", "coucou", "hey"]):
-    return (
-        "Bonjour ! Je suis **HAIDARA AI**. Envoie-moi ta question, ton"
-        " exercice ou ton questionnaire."
-    )
-  return (
-      f"**HAIDARA AI (mode local)** a reçu : *« {m} »*.\n\n"
-      "Pour activer les réponses complètes type IA sur tous les"
-      " questionnaires, définis la variable `GEMINI_API_KEY` dans CMD avant de"
-      " lancer Uvicorn."
-  )
+class ImageRequest(BaseModel):
+    prompt: str
 
 
-def generer_reponse_ia(texte: str) -> str:
-  msg = texte.strip()
-  if not msg:
-    return reponse_locale_secours(msg)
-
-  api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-  if not api_key or genai is None:
-    return reponse_locale_secours(msg)
-
-  try:
-    client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model="gemini-3.8-flash",
-        contents=msg,
-        config={"system_instruction": SYSTEM_INSTRUCTION},
-    )
-    return response.text or "Aucune réponse générée."
-  except Exception as exc:
-    return (
-        "Erreur lors de l'appel à l'API IA : "
-        f"`{exc}`\n\n"
-        + reponse_locale_secours(msg)
-    )
+def find_index_html() -> Optional[Path]:
+    candidates = [
+        BASE_DIR / "templates" / "index.html",
+        BASE_DIR / "static" / "index.html",
+        BASE_DIR / "index.html",
+        APP_DIR / "templates" / "index.html",
+        APP_DIR / "static" / "index.html",
+        APP_DIR / "index.html",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
 
 
-@app.get("/bonjour")
-def bonjour():
-  return {"message": "Bonjour"}
+def extract_reply_text(response: Any) -> str:
+    text = getattr(response, "text", None)
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+
+    candidates = getattr(response, "candidates", None) or []
+    parts_out: list[str] = []
+    for cand in candidates:
+        content = getattr(cand, "content", None)
+        parts = getattr(content, "parts", None) or []
+        for part in parts:
+            part_text = getattr(part, "text", None)
+            if isinstance(part_text, str) and part_text.strip():
+                parts_out.append(part_text.strip())
+    if parts_out:
+        return "\n".join(parts_out)
+
+    return "Aucune réponse textuelle reçue du modèle."
 
 
-@app.post("/chat")
-def discuter(data: MessageEntree):
-  return {"reponse": generer_reponse_ia(data.message)}
+def get_genai_client() -> tuple[Any, Optional[str]]:
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        return None, (
+            "Clé `GEMINI_API_KEY` non détectée dans cette fenêtre CMD. "
+            "Tape `set GEMINI_API_KEY=TA_CLE_API` avant de lancer Uvicorn."
+        )
+    if genai is None:
+        return None, "Le paquet `google-genai` n'est pas installé dans l'environnement."
+    return genai.Client(api_key=api_key), None
+
+
+def discover_available_flash_models(client: Any) -> list[str]:
+    discovered: list[str] = []
+    try:
+        for m in client.models.list():
+            name = getattr(m, "name", "") or ""
+            short_name = name.replace("models/", "")
+            methods = getattr(m, "supported_generation_methods", None) or getattr(m, "supported_actions", None) or []
+            if "flash" in short_name.lower() and (not methods or "generateContent" in methods):
+                discovered.append(short_name)
+    except Exception:
+        pass
+    return discovered
+
+
+def call_gemini(contents: Any, max_attempts: int = 2) -> str:
+    client, err = get_genai_client()
+    if err:
+        return err
+
+    candidates_models = list(MODELS_TO_TRY)
+    for m in discover_available_flash_models(client):
+        if m not in candidates_models:
+            candidates_models.append(m)
+
+    last_err = ""
+    for model_name in candidates_models:
+        for attempt in range(max_attempts):
+            try:
+                config = (
+                    types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION)
+                    if types is not None
+                    else None
+                )
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=config,
+                )
+                return extract_reply_text(response)
+            except Exception as exc:
+                last_err = str(exc)
+                if ("503" in last_err or "UNAVAILABLE" in last_err) and attempt < max_attempts - 1:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                if "404" in last_err or "NOT_FOUND" in last_err:
+                    break
+                return f"Erreur Gemini ({model_name}) : {last_err}"
+
+    return f"Impossible d'obtenir une réponse : {last_err}"
 
 
 @app.get("/", response_class=HTMLResponse)
-def interface_chat():
-  return """
-    <!DOCTYPE html>
-    <html lang="fr">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <meta name="theme-color" content="#0f172a" />
-        <link rel="manifest" href="/static/manifest.json" />
-        <link rel="icon" href="/static/icon-192.png" />
-        <title>HAIDARA AI</title>
-        <style>
-            :root {
-                --bg: #0b1120;
-                --panel: #0f172a;
-                --card: #1e293b;
-                --user: #2563eb;
-                --accent: #10b981;
-                --text: #f8fafc;
-                --muted: #94a3b8;
-                --border: #334155;
-            }
-            * { box-sizing: border-box; }
-            body {
-                margin: 0;
-                font-family: "Segoe UI", Arial, sans-serif;
-                background: var(--bg);
-                color: var(--text);
-                display: flex;
-                flex-direction: column;
-                height: 100vh;
-            }
-            header {
-                background: var(--panel);
-                border-bottom: 1px solid var(--border);
-                padding: 14px 20px;
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-            }
-            .brand {
-                display: flex;
-                align-items: center;
-                gap: 10px;
-                font-weight: 700;
-                font-size: 18px;
-            }
-            .dot {
-                width: 10px;
-                height: 10px;
-                border-radius: 50%;
-                background: var(--accent);
-            }
-            .badge {
-                font-size: 12px;
-                color: var(--muted);
-                background: var(--card);
-                padding: 4px 10px;
-                border-radius: 999px;
-                border: 1px solid var(--border);
-            }
-            #messages {
-                flex: 1;
-                overflow-y: auto;
-                padding: 20px;
-                display: flex;
-                flex-direction: column;
-                gap: 14px;
-                max-width: 900px;
-                width: 100%;
-                margin: 0 auto;
-            }
-            .msg {
-                max-width: 82%;
-                padding: 13px 16px;
-                border-radius: 14px;
-                line-height: 1.55;
-                font-size: 15px;
-                white-space: pre-line;
-                word-wrap: break-word;
-            }
-            .user {
-                align-self: flex-end;
-                background: var(--user);
-                color: #ffffff;
-                border-bottom-right-radius: 4px;
-            }
-            .ia {
-                align-self: flex-start;
-                background: var(--card);
-                color: var(--text);
-                border: 1px solid var(--border);
-                border-bottom-left-radius: 4px;
-            }
-            .footer-wrap {
-                background: var(--panel);
-                border-top: 1px solid var(--border);
-                padding: 12px 16px;
-            }
-            form {
-                max-width: 900px;
-                margin: 0 auto;
-                display: flex;
-                gap: 10px;
-            }
-            input {
-                flex: 1;
-                padding: 13px 16px;
-                border-radius: 10px;
-                border: 1px solid var(--border);
-                background: var(--bg);
-                color: var(--text);
-                font-size: 15px;
-                outline: none;
-            }
-            input:focus {
-                border-color: var(--accent);
-            }
-            button {
-                padding: 13px 20px;
-                border-radius: 10px;
-                border: none;
-                background: var(--accent);
-                color: #042f2e;
-                font-weight: 700;
-                font-size: 15px;
-                cursor: pointer;
-            }
-        </style>
-    </head>
-    <body>
-        <header>
-            <div class="brand">
-                <span class="dot"></span>
-                <span>HAIDARA AI</span>
-            </div>
-            <span class="badge">PWA + IA v1.1</span>
-        </header>
+async def home() -> HTMLResponse:
+    index_path = find_index_html()
+    if index_path is not None:
+        return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
+    return HTMLResponse(
+        content="<h1>HAIDARA AI</h1><p>Fichier index.html introuvable.</p>",
+        status_code=200,
+    )
 
-        <div id="messages">
-            <div class="msg ia">Bienvenue sur <strong>HAIDARA AI</strong>. Pose-moi une question ou envoie un questionnaire complet.</div>
-        </div>
 
-        <div class="footer-wrap">
-            <form id="chat-form">
-                <input id="champ" type="text" placeholder="Écris ton message ou ton questionnaire..." autocomplete="off" required />
-                <button type="submit">Envoyer</button>
-            </form>
-        </div>
+@app.post("/chat")
+async def chat_endpoint(request: Request, payload: Optional[ChatRequest] = None) -> JSONResponse:
+    user_message = ""
+    if payload and payload.message:
+        user_message = payload.message.strip()
+    else:
+        try:
+            raw = await request.json()
+            if isinstance(raw, dict):
+                user_message = str(raw.get("message") or raw.get("prompt") or "").strip()
+        except Exception:
+            pass
 
-        <script>
-            if ("serviceWorker" in navigator) {
-                navigator.serviceWorker.register("/static/service-worker.js");
-            }
+    if not user_message:
+        return JSONResponse(
+            status_code=400,
+            content={"reply": "Écris un message avant d'envoyer."},
+        )
 
-            const form = document.getElementById("chat-form");
-            const champ = document.getElementById("champ");
-            const messages = document.getElementById("messages");
+    reply = call_gemini(user_message)
+    return JSONResponse(content={"reply": reply})
 
-            function formaterTexte(texte) {
-                return texte
-                    .replace(/&/g, "&")
-                    .replace(/</g, "<")
-                    .replace(/>/g, ">")
-                    .replace(/\\*\\*(.*?)\\*\\*/g, "<strong>$1</strong>")
-                    .replace(/\\*(.*?)\\*/g, "<em>$1</em>");
-            }
 
-            function ajouterBulle(texte, auteur) {
-                const div = document.createElement("div");
-                div.className = "msg " + auteur;
-                if (auteur === "ia") {
-                    div.innerHTML = formaterTexte(texte);
-                } else {
-                    div.textContent = texte;
-                }
-                messages.appendChild(div);
-                messages.scrollTop = messages.scrollHeight;
-            }
+@app.post("/upload")
+async def upload_endpoint(request: Request) -> JSONResponse:
+    client, err = get_genai_client()
+    if err:
+        return JSONResponse(content={"reply": err})
 
-            form.addEventListener("submit", async (e) => {
-                e.preventDefault();
-                const texte = champ.value.trim();
-                if (!texte) return;
-                ajouterBulle(texte, "user");
-                champ.value = "";
+    try:
+        form = await request.form()
+    except Exception as exc:
+        return JSONResponse(
+            content={"reply": f"Erreur de lecture du formulaire : {exc}"}
+        )
 
-                ajouterBulle("Réflexion en cours...", "ia");
-                const bulleAttente = messages.lastElementChild;
+    uploaded = form.get("file")
+    message = str(form.get("message") or "").strip()
 
-                try {
-                    const res = await fetch("/chat", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ message: texte })
-                    });
-                    const data = await res.json();
-                    bulleAttente.innerHTML = formaterTexte(data.reponse);
-                } catch (err) {
-                    bulleAttente.textContent = "Erreur de connexion au serveur HAIDARA AI.";
-                }
-            });
-        </script>
-    </body>
-    </html>
-    """
+    if not isinstance(uploaded, UploadFile):
+        return JSONResponse(content={"reply": "Aucun fichier reçu."})
+
+    raw_bytes = await uploaded.read()
+    if not raw_bytes:
+        return JSONResponse(content={"reply": "Le fichier est vide."})
+
+    filename = uploaded.filename or "fichier"
+    content_type = uploaded.content_type or "application/octet-stream"
+    prompt_text = message or f"Analyse ce fichier ({filename}) et explique son contenu en détail."
+
+    try:
+        if (content_type.startswith("image/") or content_type == "application/pdf") and types is not None:
+            part = types.Part.from_bytes(data=raw_bytes, mime_type=content_type)
+            reply = call_gemini([part, prompt_text])
+            return JSONResponse(content={"reply": reply})
+
+        decoded = raw_bytes.decode("utf-8", errors="replace")[:15000]
+        reply = call_gemini(f"{prompt_text}\n\nContenu de `{filename}` :\n```\n{decoded}\n```")
+        return JSONResponse(content={"reply": reply})
+    except Exception as exc:
+        return JSONResponse(content={"reply": f"Erreur lors de l'analyse du fichier : {exc}"})
+
+
+@app.post("/generate-image")
+async def generate_image_endpoint(payload: ImageRequest) -> JSONResponse:
+    prompt = payload.prompt.strip()
+    if not prompt:
+        return JSONResponse(content={"error": "Décris l'image à créer."})
+
+    client, err = get_genai_client()
+    if err:
+        return JSONResponse(content={"error": err})
+
+    last_err = ""
+    try:
+        res = client.models.generate_images(
+            model="imagen-3.0-generate-002",
+            prompt=prompt,
+            config=types.GenerateImagesConfig(number_of_images=1) if types is not None else None,
+        )
+        generated = getattr(res, "generated_images", None) or []
+        if generated:
+            img_bytes = generated[0].image.image_bytes
+            b64 = base64.b64encode(img_bytes).decode("utf-8")
+            return JSONResponse(content={"image_url": f"data:image/png;base64,{b64}"})
+    except Exception as exc:
+        last_err = str(exc)
+
+    try:
+        res = client.models.generate_content(
+            model="gemini-2.5-flash-image",
+            contents=prompt,
+            config=types.GenerateContentConfig(response_modalities=["IMAGE", "TEXT"]) if types is not None else None,
+        )
+        for cand in getattr(res, "candidates", None) or []:
+            for part in getattr(getattr(cand, "content", None), "parts", None) or []:
+                inline = getattr(part, "inline_data", None)
+                if inline and getattr(inline, "data", None):
+                    mime = getattr(inline, "mime_type", "image/png")
+                    raw_data = inline.data
+                    b64 = base64.b64encode(raw_data).decode("utf-8") if isinstance(raw_data, bytes) else str(raw_data)
+                    return JSONResponse(content={"image_url": f"data:{mime};base64,{b64}"})
+    except Exception as exc:
+        last_err = str(exc)
+
+    return JSONResponse(
+        content={"error": f"Création d'image indisponible sur ce compte/modèle ({last_err})."}
+    )
