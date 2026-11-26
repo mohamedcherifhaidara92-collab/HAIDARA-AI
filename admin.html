@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin — HAIDARA AI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f5f5f5;
+      color: #111;
+      padding: 24px;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    h1 { font-size: 1.4rem; margin-bottom: 20px; }
+    .login-box, .panel {
+      background: #fff;
+      border-radius: 14px;
+      padding: 24px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+    input {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      font-size: 1rem;
+      margin-bottom: 12px;
+    }
+    button {
+      padding: 11px 18px;
+      border-radius: 10px;
+      border: none;
+      background: #000;
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.95rem;
+    }
+    button.secondary { background: #eee; color: #111; }
+    button.danger { background: #dc2626; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 8px;
+      border-bottom: 1px solid #eee;
+    }
+    th { color: #666; font-weight: 600; }
+    .status {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+    .pending { background: #fef3c7; color: #92400e; }
+    .approved { background: #dcfce7; color: #166534; }
+    .rejected { background: #fee2e2; color: #991b1b; }
+    .actions { display: flex; gap: 6px; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <h1>HAIDARA AI — Administration</h1>
+
+  <div class="login-box" id="loginBox">
+    <p style="margin-bottom:12px;color:#555;">Mot de passe admin</p>
+    <input type="password" id="pwd" placeholder="Mot de passe" />
+    <button onclick="login()">Connexion</button>
+  </div>
+
+  <div class="panel hidden" id="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <strong>Paiements récents</strong>
+      <button class="secondary" onclick="loadPayments()">Rafraîchir</button>
+    </div>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Référence</th>
+            <th>User</th>
+            <th>TX</th>
+            <th>Montant</th>
+            <th>Statut</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    let password = "";
+
+    async function login() {
+      password = document.getElementById("pwd").value;
+      const ok = await loadPayments();
+      if (ok) {
+        document.getElementById("loginBox").classList.add("hidden");
+        document.getElementById("panel").classList.remove("hidden");
+      } else {
+        alert("Mot de passe incorrect");
+      }
+    }
+
+    async function loadPayments() {
+      const fd = new FormData();
+      fd.append("password", password);
+      try {
+        const r = await fetch("/api/admin/payments", { method: "POST", body: fd });
+        if (!r.ok) return false;
+        const data = await r.json();
+        const tbody = document.getElementById("tbody");
+        tbody.innerHTML = "";
+        data.forEach(p => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${p.id}</td>
+            <td><code>${p.reference}</code></td>
+            <td style="max-width:100px;overflow:hidden;text-overflow:ellipsis">${p.user_id}</td>
+            <td>${p.transaction_id || "—"}</td>
+            <td>${p.amount} GNF</td>
+            <td><span class="status ${p.status}">${p.status}</span></td>
+            <td class="actions">
+              ${p.status === "pending" ? `
+                <button onclick="approve(${p.id})">Valider</button>
+                <button class="danger" onclick="reject(${p.id})">Rejeter</button>
+              ` : "—"}
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+        return true;
+      } catch(e) {
+        return false;
+      }
+    }
+
+    async function approve(id) {
+      const r = await fetch("/api/admin/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payment_id: id, password })
+      });
+      const d = await r.json();
+      alert(d.message || "OK");
+      loadPayments();
+    }
+
+    async function reject(id) {
+      const fd = new FormData();
+      fd.append("payment_id", id);
+      fd.append("password", password);
+      await fetch("/api/admin/reject", { method: "POST", body: fd });
+      loadPayments();
+    }
+  </script>
+</body>
+</html>
