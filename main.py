@@ -1,268 +1,423 @@
-import base64
-import os
-import time
-from pathlib import Path
-from typing import Any, Optional
+"""
+HAIDARA AI - Backend FastAPI
+Interface blanche style Grok + Gemini 3.8 Flash + crédits Orange Money
+"""
 
-from fastapi import FastAPI, Request, UploadFile
+import os
+import uuid
+import sqlite3
+import time
+from datetime import datetime
+from typing import Optional, List, Dict, Any
+from contextlib import contextmanager
+
+from fastapi import FastAPI, Request, HTTPException, Form, File, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+import google.generativeai as genai
 
-try:
-    from google import genai
-    from google.genai import types
-except ImportError:
-    genai = None  # type: ignore[assignment]
-    types = None  # type: ignore[assignment]
+# ==================== CONFIG ====================
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "haidara2026")  # Change-le !
+ORANGE_MONEY_NUMBER = "+224629600906"
+FREE_MESSAGES = 10
+DATABASE_PATH = os.getenv("DATABASE_PATH", "haidara.db")
 
-BASE_DIR = Path(__file__).resolve().parent
-APP_DIR = BASE_DIR.parent
+# Packs disponibles
+PACKS = {
+    "standard": {
+        "name": "Standard",
+        "price": 20000,
+        "messages": 50,
+        "premium": False,
+        "label": "50 messages"
+    },
+    "premium": {
+        "name": "Premium",
+        "price": 50000,
+        "messages": 200,
+        "premium": True,
+        "label": "200 messages + Premium"
+    },
+}
 
-app = FastAPI(title="HAIDARA AI")
+# ==================== INIT ====================
+app = FastAPI(title="HAIDARA AI", version="2.0.0")
+templates = Jinja2Templates(directory="templates")
 
-static_dir = APP_DIR / "static"
-if not static_dir.exists():
-    static_dir = BASE_DIR / "static"
-if static_dir.exists():
-    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+if os.path.isdir("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
 
-MODELS_TO_TRY = [
-    "gemini-3.8-flash",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-]
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
-SYSTEM_INSTRUCTION = (
-    "Tu es HAIDARA AI, un assistant intelligent de haut niveau. "
-    "Réponds toujours en français (sauf demande contraire) de façon claire, complète, "
-    "structurée et détaillée comme Gemini : utilise des titres clairs, des listes à puces, "
-    "du gras sur les notions clés et des exemples concrets quand c'est utile."
-)
-
-
-class ChatRequest(BaseModel):
-    message: str
-
-
-class ImageRequest(BaseModel):
-    prompt: str
-
-
-def find_index_html() -> Optional[Path]:
-    candidates = [
-        BASE_DIR / "templates" / "index.html",
-        BASE_DIR / "static" / "index.html",
-        BASE_DIR / "index.html",
-        APP_DIR / "templates" / "index.html",
-        APP_DIR / "static" / "index.html",
-        APP_DIR / "index.html",
-    ]
-    for path in candidates:
-        if path.exists():
-            return path
-    return None
-
-
-def extract_reply_text(response: Any) -> str:
-    text = getattr(response, "text", None)
-    if isinstance(text, str) and text.strip():
-        return text.strip()
-
-    candidates = getattr(response, "candidates", None) or []
-    parts_out: list[str] = []
-    for cand in candidates:
-        content = getattr(cand, "content", None)
-        parts = getattr(content, "parts", None) or []
-        for part in parts:
-            part_text = getattr(part, "text", None)
-            if isinstance(part_text, str) and part_text.strip():
-                parts_out.append(part_text.strip())
-    if parts_out:
-        return "\n".join(parts_out)
-
-    return "Aucune réponse textuelle reçue du modèle."
-
-
-def get_genai_client() -> tuple[Any, Optional[str]]:
-    api_key = os.getenv("GEMINI_API_KEY", "").strip()
-    if not api_key:
-        return None, (
-            "Clé `GEMINI_API_KEY` non détectée dans cette fenêtre CMD. "
-            "Tape `set GEMINI_API_KEY=TA_CLE_API` avant de lancer Uvicorn."
-        )
-    if genai is None:
-        return None, "Le paquet `google-genai` n'est pas installé dans l'environnement."
-    return genai.Client(api_key=api_key), None
-
-
-def discover_available_flash_models(client: Any) -> list[str]:
-    discovered: list[str] = []
-    try:
-        for m in client.models.list():
-            name = getattr(m, "name", "") or ""
-            short_name = name.replace("models/", "")
-            methods = getattr(m, "supported_generation_methods", None) or getattr(m, "supported_actions", None) or []
-            if "flash" in short_name.lower() and (not methods or "generateContent" in methods):
-                discovered.append(short_name)
-    except Exception:
-        pass
-    return discovered
-
-
-def call_gemini(contents: Any, max_attempts: int = 2) -> str:
-    client, err = get_genai_client()
-    if err:
-        return err
-
-    candidates_models = list(MODELS_TO_TRY)
-    for m in discover_available_flash_models(client):
-        if m not in candidates_models:
-            candidates_models.append(m)
-
-    last_err = ""
-    for model_name in candidates_models:
-        for attempt in range(max_attempts):
-            try:
-                config = (
-                    types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION)
-                    if types is not None
-                    else None
-                )
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=contents,
-                    config=config,
-                )
-                return extract_reply_text(response)
-            except Exception as exc:
-                last_err = str(exc)
-                if ("503" in last_err or "UNAVAILABLE" in last_err) and attempt < max_attempts - 1:
-                    time.sleep(1.5 * (attempt + 1))
-                    continue
-                if "404" in last_err or "NOT_FOUND" in last_err:
-                    break
-                return f"Erreur Gemini ({model_name}) : {last_err}"
-
-    return f"Impossible d'obtenir une réponse : {last_err}"
-
-
-@app.get("/", response_class=HTMLResponse)
-async def home() -> HTMLResponse:
-    index_path = find_index_html()
-    if index_path is not None:
-        return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
-    return HTMLResponse(
-        content="<h1>HAIDARA AI</h1><p>Fichier index.html introuvable.</p>",
-        status_code=200,
-    )
-
-
-@app.post("/chat")
-async def chat_endpoint(request: Request, payload: Optional[ChatRequest] = None) -> JSONResponse:
-    user_message = ""
-    if payload and payload.message:
-        user_message = payload.message.strip()
-    else:
+# ==================== DATABASE ====================
+def init_db():
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id TEXT PRIMARY KEY,
+                free_used INTEGER DEFAULT 0,
+                credits INTEGER DEFAULT 0,
+                is_premium INTEGER DEFAULT 0,
+                created_at TEXT,
+                last_seen TEXT
+            )
+        """)
+        # Migration douce si la colonne n'existe pas encore
         try:
-            raw = await request.json()
-            if isinstance(raw, dict):
-                user_message = str(raw.get("message") or raw.get("prompt") or "").strip()
+            conn.execute("ALTER TABLE users ADD COLUMN is_premium INTEGER DEFAULT 0")
         except Exception:
             pass
 
-    if not user_message:
-        return JSONResponse(
-            status_code=400,
-            content={"reply": "Écris un message avant d'envoyer."},
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS payments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
+                reference TEXT UNIQUE,
+                pack_type TEXT DEFAULT 'standard',
+                amount INTEGER,
+                messages INTEGER,
+                transaction_id TEXT,
+                status TEXT DEFAULT 'pending',  -- pending / approved / rejected
+                created_at TEXT,
+                approved_at TEXT
+            )
+        """)
+        try:
+            conn.execute("ALTER TABLE payments ADD COLUMN pack_type TEXT DEFAULT 'standard'")
+        except Exception:
+            pass
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
+                role TEXT,
+                content TEXT,
+                created_at TEXT
+            )
+        """)
+        conn.commit()
+
+@contextmanager
+def get_db():
+    conn = sqlite3.connect(DATABASE_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+init_db()
+
+# ==================== MODELS ====================
+class ChatRequest(BaseModel):
+    message: str
+    user_id: str
+    history: Optional[List[Dict[str, str]]] = None
+
+class RedeemRequest(BaseModel):
+    user_id: str
+    transaction_id: str
+    reference: str
+
+class AdminApprove(BaseModel):
+    payment_id: int
+    password: str
+
+# ==================== HELPERS ====================
+def get_or_create_user(user_id: str) -> dict:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
+        now = datetime.utcnow().isoformat()
+        if row:
+            conn.execute("UPDATE users SET last_seen = ? WHERE user_id = ?", (now, user_id))
+            conn.commit()
+            d = dict(row)
+            if "is_premium" not in d:
+                d["is_premium"] = 0
+            return d
+        conn.execute(
+            "INSERT INTO users (user_id, free_used, credits, is_premium, created_at, last_seen) VALUES (?, 0, 0, 0, ?, ?)",
+            (user_id, now, now)
+        )
+        conn.commit()
+        return {"user_id": user_id, "free_used": 0, "credits": 0, "is_premium": 0}
+
+def can_chat(user: dict) -> tuple[bool, str]:
+    free_left = max(0, FREE_MESSAGES - user["free_used"])
+    if free_left > 0:
+        return True, f"free:{free_left}"
+    if user["credits"] > 0:
+        return True, f"credit:{user['credits']}"
+    return False, "no_credits"
+
+def consume_message(user_id: str):
+    with get_db() as conn:
+        user = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
+        if not user:
+            return
+        free_used = user["free_used"]
+        credits = user["credits"]
+        if free_used < FREE_MESSAGES:
+            conn.execute("UPDATE users SET free_used = free_used + 1 WHERE user_id = ?", (user_id,))
+        elif credits > 0:
+            conn.execute("UPDATE users SET credits = credits - 1 WHERE user_id = ?", (user_id,))
+        conn.commit()
+
+def call_gemini(message: str, history: Optional[List[Dict]] = None) -> str:
+    if not GEMINI_API_KEY:
+        return "⚠️ Clé API Gemini manquante. Configure la variable d'environnement GEMINI_API_KEY."
+
+    try:
+        model = genai.GenerativeModel(
+            model_name=GEMINI_MODEL,
+            system_instruction=(
+                "Tu es HAIDARA AI, un assistant intelligent, poli, clair et utile. "
+                "Tu réponds en français par défaut, sauf si l'utilisateur écrit dans une autre langue. "
+                "Sois concis mais complet. Utilise un style moderne et agréable."
+            )
         )
 
-    reply = call_gemini(user_message)
-    return JSONResponse(content={"reply": reply})
+        # Build history for multi-turn
+        chat_history = []
+        if history:
+            for h in history[-10:]:  # last 10 messages max
+                role = "user" if h.get("role") == "user" else "model"
+                chat_history.append({"role": role, "parts": [h.get("content", "")]})
 
+        if chat_history:
+            chat = model.start_chat(history=chat_history)
+            response = chat.send_message(message)
+        else:
+            response = model.generate_content(message)
 
+        return response.text or "Désolé, je n'ai pas pu générer de réponse."
+
+    except Exception as e:
+        err = str(e)
+        if "API_KEY" in err.upper() or "401" in err or "403" in err:
+            return "⚠️ Problème avec la clé API Gemini. Vérifie qu'elle est valide et active."
+        if "quota" in err.lower() or "rate" in err.lower():
+            return "⚠️ Quota Gemini dépassé temporairement. Réessaie dans quelques minutes."
+        return f"⚠️ Erreur Gemini : {err[:200]}"
+
+# ==================== ROUTES ====================
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    return templates.TemplateResponse("index.html", {
+        "request": request,
+        "orange_number": ORANGE_MONEY_NUMBER,
+        "free_messages": FREE_MESSAGES,
+        "packs": PACKS,
+    })
+
+@app.get("/api/status")
+async def status(user_id: str):
+    user = get_or_create_user(user_id)
+    free_left = max(0, FREE_MESSAGES - user["free_used"])
+    return {
+        "user_id": user_id,
+        "free_left": free_left,
+        "credits": user["credits"],
+        "is_premium": bool(user.get("is_premium")),
+        "can_chat": free_left > 0 or user["credits"] > 0,
+        "orange_number": ORANGE_MONEY_NUMBER,
+        "packs": PACKS,
+    }
+
+@app.post("/chat")
+async def chat(payload: ChatRequest):
+    user = get_or_create_user(payload.user_id)
+    allowed, reason = can_chat(user)
+
+    if not allowed:
+        return JSONResponse({
+            "error": "no_credits",
+            "message": "Tu as utilisé tes 10 messages gratuits. Achète un pack pour continuer.",
+            "free_left": 0,
+            "credits": 0
+        }, status_code=402)
+
+    # Call Gemini
+    reply = call_gemini(payload.message, payload.history)
+
+    # Consume only if success (not error message starting with ⚠️)
+    if not reply.startswith("⚠️"):
+        consume_message(payload.user_id)
+
+    # Refresh status
+    user = get_or_create_user(payload.user_id)
+    free_left = max(0, FREE_MESSAGES - user["free_used"])
+
+    return {
+        "reply": reply,
+        "free_left": free_left,
+        "credits": user["credits"],
+    }
+
+@app.post("/api/create-payment")
+async def create_payment(user_id: str = Form(...), pack_type: str = Form("standard")):
+    if pack_type not in PACKS:
+        raise HTTPException(400, "Pack invalide")
+
+    pack = PACKS[pack_type]
+    user = get_or_create_user(user_id)
+    reference = f"HAIDARA-{uuid.uuid4().hex[:8].upper()}"
+    now = datetime.utcnow().isoformat()
+
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO payments (user_id, reference, pack_type, amount, messages, status, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)",
+            (user_id, reference, pack_type, pack["price"], pack["messages"], now)
+        )
+        conn.commit()
+
+    return {
+        "reference": reference,
+        "pack_type": pack_type,
+        "pack_name": pack["name"],
+        "amount": pack["price"],
+        "messages": pack["messages"],
+        "is_premium": pack["premium"],
+        "orange_number": ORANGE_MONEY_NUMBER,
+        "instructions": (
+            f"1. Ouvre Orange Money\n"
+            f"2. Envoie {pack['price']:,} GNF au numéro {ORANGE_MONEY_NUMBER}\n"
+            f"3. Mets comme motif / référence : {reference}\n"
+            f"4. Une fois le paiement fait, reviens ici et entre le code de transaction Orange Money."
+        )
+    }
+
+@app.post("/api/redeem")
+async def redeem(payload: RedeemRequest):
+    """L'utilisateur soumet son ID de transaction après paiement."""
+    with get_db() as conn:
+        payment = conn.execute(
+            "SELECT * FROM payments WHERE reference = ? AND user_id = ?",
+            (payload.reference, payload.user_id)
+        ).fetchone()
+
+        if not payment:
+            raise HTTPException(404, "Référence de paiement introuvable.")
+
+        if payment["status"] == "approved":
+            return {"message": "Ce paiement a déjà été validé. Les crédits sont déjà sur ton compte."}
+
+        # On enregistre le transaction_id et on laisse en pending pour validation admin
+        conn.execute(
+            "UPDATE payments SET transaction_id = ?, status = 'pending' WHERE id = ?",
+            (payload.transaction_id.strip(), payment["id"])
+        )
+        conn.commit()
+
+    return {
+        "message": (
+            "✅ Demande enregistrée !\n\n"
+            "Ton paiement est en cours de vérification. "
+            "Les crédits seront ajoutés dès que le propriétaire validera la transaction "
+            "(généralement sous 1h en journée).\n\n"
+            "Tu peux aussi contacter le propriétaire avec ton code de transaction pour accélérer."
+        ),
+        "status": "pending"
+    }
+
+@app.get("/admin")
+async def admin_page(request: Request):
+    return templates.TemplateResponse("admin.html", {"request": request})
+
+@app.post("/api/admin/payments")
+async def list_payments(password: str = Form(...)):
+    if password != ADMIN_PASSWORD:
+        raise HTTPException(403, "Mot de passe incorrect")
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM payments ORDER BY created_at DESC LIMIT 50"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+@app.post("/api/admin/approve")
+async def approve_payment(payload: AdminApprove):
+    if payload.password != ADMIN_PASSWORD:
+        raise HTTPException(403, "Mot de passe incorrect")
+
+    with get_db() as conn:
+        payment = conn.execute("SELECT * FROM payments WHERE id = ?", (payload.payment_id,)).fetchone()
+        if not payment:
+            raise HTTPException(404, "Paiement introuvable")
+        if payment["status"] == "approved":
+            return {"message": "Déjà approuvé"}
+
+        pack_type = payment["pack_type"] if "pack_type" in payment.keys() else "standard"
+        is_premium = 1 if pack_type == "premium" else 0
+
+        # Add credits + premium flag
+        if is_premium:
+            conn.execute(
+                "UPDATE users SET credits = credits + ?, is_premium = 1 WHERE user_id = ?",
+                (payment["messages"], payment["user_id"])
+            )
+        else:
+            conn.execute(
+                "UPDATE users SET credits = credits + ? WHERE user_id = ?",
+                (payment["messages"], payment["user_id"])
+            )
+
+        conn.execute(
+            "UPDATE payments SET status = 'approved', approved_at = ? WHERE id = ?",
+            (datetime.utcnow().isoformat(), payload.payment_id)
+        )
+        conn.commit()
+
+    pack_label = "Premium" if is_premium else "Standard"
+    return {"message": f"✅ Pack {pack_label} validé : {payment['messages']} crédits ajoutés."}
+
+@app.post("/api/admin/reject")
+async def reject_payment(payment_id: int = Form(...), password: str = Form(...)):
+    if password != ADMIN_PASSWORD:
+        raise HTTPException(403, "Mot de passe incorrect")
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE payments SET status = 'rejected' WHERE id = ?",
+            (payment_id,)
+        )
+        conn.commit()
+    return {"message": "Paiement rejeté"}
+
+# Keep simple endpoints for compatibility
 @app.post("/upload")
-async def upload_endpoint(request: Request) -> JSONResponse:
-    client, err = get_genai_client()
-    if err:
-        return JSONResponse(content={"reply": err})
+async def upload(file: UploadFile = File(...), message: str = Form(""), user_id: str = Form("anonymous")):
+    user = get_or_create_user(user_id)
+    allowed, _ = can_chat(user)
+    if not allowed:
+        return JSONResponse({"error": "no_credits", "reply": "Plus de crédits. Achète un pack."}, status_code=402)
 
+    content = await file.read()
+    # Simple text extraction attempt
     try:
-        form = await request.form()
-    except Exception as exc:
-        return JSONResponse(
-            content={"reply": f"Erreur de lecture du formulaire : {exc}"}
-        )
+        text = content.decode("utf-8", errors="ignore")[:4000]
+    except Exception:
+        text = "[Fichier binaire reçu]"
 
-    uploaded = form.get("file")
-    message = str(form.get("message") or "").strip()
-
-    if not isinstance(uploaded, UploadFile):
-        return JSONResponse(content={"reply": "Aucun fichier reçu."})
-
-    raw_bytes = await uploaded.read()
-    if not raw_bytes:
-        return JSONResponse(content={"reply": "Le fichier est vide."})
-
-    filename = uploaded.filename or "fichier"
-    content_type = uploaded.content_type or "application/octet-stream"
-    prompt_text = message or f"Analyse ce fichier ({filename}) et explique son contenu en détail."
-
-    try:
-        if (content_type.startswith("image/") or content_type == "application/pdf") and types is not None:
-            part = types.Part.from_bytes(data=raw_bytes, mime_type=content_type)
-            reply = call_gemini([part, prompt_text])
-            return JSONResponse(content={"reply": reply})
-
-        decoded = raw_bytes.decode("utf-8", errors="replace")[:15000]
-        reply = call_gemini(f"{prompt_text}\n\nContenu de `{filename}` :\n```\n{decoded}\n```")
-        return JSONResponse(content={"reply": reply})
-    except Exception as exc:
-        return JSONResponse(content={"reply": f"Erreur lors de l'analyse du fichier : {exc}"})
-
+    prompt = f"L'utilisateur a envoyé un fichier nommé {file.filename}. Contenu extrait :\n{text}\n\nQuestion de l'utilisateur : {message or 'Analyse ce fichier.'}"
+    reply = call_gemini(prompt)
+    if not reply.startswith("⚠️"):
+        consume_message(user_id)
+    return {"reply": reply}
 
 @app.post("/generate-image")
-async def generate_image_endpoint(payload: ImageRequest) -> JSONResponse:
-    prompt = payload.prompt.strip()
-    if not prompt:
-        return JSONResponse(content={"error": "Décris l'image à créer."})
+async def generate_image(request: Request):
+    # Placeholder - real image gen needs Imagen or another service
+    body = await request.json()
+    prompt = body.get("prompt", "")
+    return {
+        "error": "La génération d'image n'est pas encore activée sur cette version. Utilise le chat pour décrire une image."
+    }
 
-    client, err = get_genai_client()
-    if err:
-        return JSONResponse(content={"error": err})
-
-    last_err = ""
-    try:
-        res = client.models.generate_images(
-            model="imagen-3.0-generate-002",
-            prompt=prompt,
-            config=types.GenerateImagesConfig(number_of_images=1) if types is not None else None,
-        )
-        generated = getattr(res, "generated_images", None) or []
-        if generated:
-            img_bytes = generated[0].image.image_bytes
-            b64 = base64.b64encode(img_bytes).decode("utf-8")
-            return JSONResponse(content={"image_url": f"data:image/png;base64,{b64}"})
-    except Exception as exc:
-        last_err = str(exc)
-
-    try:
-        res = client.models.generate_content(
-            model="gemini-2.5-flash-image",
-            contents=prompt,
-            config=types.GenerateContentConfig(response_modalities=["IMAGE", "TEXT"]) if types is not None else None,
-        )
-        for cand in getattr(res, "candidates", None) or []:
-            for part in getattr(getattr(cand, "content", None), "parts", None) or []:
-                inline = getattr(part, "inline_data", None)
-                if inline and getattr(inline, "data", None):
-                    mime = getattr(inline, "mime_type", "image/png")
-                    raw_data = inline.data
-                    b64 = base64.b64encode(raw_data).decode("utf-8") if isinstance(raw_data, bytes) else str(raw_data)
-                    return JSONResponse(content={"image_url": f"data:{mime};base64,{b64}"})
-    except Exception as exc:
-        last_err = str(exc)
-
-    return JSONResponse(
-        content={"error": f"Création d'image indisponible sur ce compte/modèle ({last_err})."}
-    )
+@app.get("/health")
+async def health():
+    return {"status": "ok", "model": GEMINI_MODEL, "has_key": bool(GEMINI_API_KEY)}
