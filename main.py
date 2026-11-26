@@ -2,422 +2,295 @@
 HAIDARA AI - Backend FastAPI
 Interface blanche style Grok + Gemini 3.8 Flash + crédits Orange Money
 """
-
 import os
+import json
 import uuid
-import sqlite3
-import time
-from datetime import datetime
-from typing import Optional, List, Dict, Any
-from contextlib import contextmanager
+import base64
+from io import BytesIO
+from pathlib import Path
+from typing import List, Optional, Dict, Any
 
-from fastapi import FastAPI, Request, HTTPException, Form, File, UploadFile
+from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-import google.generativeai as genai
+from pypdf import PdfReader
+from google import genai
+from google.genai import types
 
-# ==================== CONFIG ====================
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "haidara2026")  # Change-le !
-ORANGE_MONEY_NUMBER = "+224629600906"
-FREE_MESSAGES = 10
-DATABASE_PATH = os.getenv("DATABASE_PATH", "haidara.db")
+BASE_DIR = Path(__file__).resolve().parent
+TEMPLATES_DIR = BASE_DIR / "templates"
+DATA_DIR = BASE_DIR / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+PAYMENTS_FILE = DATA_DIR / "payments.json"
 
-# Packs disponibles
-PACKS = {
-    "standard": {
-        "name": "Standard",
-        "price": 20000,
-        "messages": 50,
-        "premium": False,
-        "label": "50 messages"
-    },
-    "premium": {
-        "name": "Premium",
-        "price": 50000,
-        "messages": 200,
-        "premium": True,
-        "label": "200 messages + Premium"
-    },
-}
+app = FastAPI(title="HAIDARA AI")
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-# ==================== INIT ====================
-app = FastAPI(title="HAIDARA AI", version="2.0.0")
-templates = Jinja2Templates(directory="templates")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 
-if os.path.isdir("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+TEXT_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-pro",
+]
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+IMAGE_MODELS = [
+    "imagen-3.0-generate-002",
+    "gemini-2.5-flash-image",
+]
 
-# ==================== DATABASE ====================
-def init_db():
-    with get_db() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id TEXT PRIMARY KEY,
-                free_used INTEGER DEFAULT 0,
-                credits INTEGER DEFAULT 0,
-                is_premium INTEGER DEFAULT 0,
-                created_at TEXT,
-                last_seen TEXT
-            )
-        """)
-        # Migration douce si la colonne n'existe pas encore
-        try:
-            conn.execute("ALTER TABLE users ADD COLUMN is_premium INTEGER DEFAULT 0")
-        except Exception:
-            pass
 
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS payments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT,
-                reference TEXT UNIQUE,
-                pack_type TEXT DEFAULT 'standard',
-                amount INTEGER,
-                messages INTEGER,
-                transaction_id TEXT,
-                status TEXT DEFAULT 'pending',  -- pending / approved / rejected
-                created_at TEXT,
-                approved_at TEXT
-            )
-        """)
-        try:
-            conn.execute("ALTER TABLE payments ADD COLUMN pack_type TEXT DEFAULT 'standard'")
-        except Exception:
-            pass
+def get_api_keys() -> List[str]:
+    names = [
+        "GEMINI_API_KEY",
+        "GEMINI_API_KEY_2",
+        "GEMINI_API_KEY_3",
+        "GEMINI_API_KEY_4",
+        "GEMINI_API_KEY_5",
+    ]
+    keys = []
+    for name in names:
+        val = os.getenv(name, "").strip().strip('"').strip("'")
+        if val and val not in keys:
+            keys.append(val)
+    return keys
 
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS conversations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT,
-                role TEXT,
-                content TEXT,
-                created_at TEXT
-            )
-        """)
-        conn.commit()
 
-@contextmanager
-def get_db():
-    conn = sqlite3.connect(DATABASE_PATH)
-    conn.row_factory = sqlite3.Row
+def load_payments() -> List[Dict[str, Any]]:
+    if not PAYMENTS_FILE.exists():
+        return []
     try:
-        yield conn
-    finally:
-        conn.close()
+        return json.loads(PAYMENTS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return []
 
-init_db()
 
-# ==================== MODELS ====================
-class ChatRequest(BaseModel):
-    message: str
-    user_id: str
-    history: Optional[List[Dict[str, str]]] = None
+def save_payments(items: List[Dict[str, Any]]) -> None:
+    PAYMENTS_FILE.write_text(
+        json.dumps(items, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
-class RedeemRequest(BaseModel):
-    user_id: str
-    transaction_id: str
-    reference: str
 
-class AdminApprove(BaseModel):
-    payment_id: int
-    password: str
+def extract_text_from_pdf(data: bytes) -> str:
+    reader = PdfReader(BytesIO(data))
+    parts = []
+    for i, page in enumerate(reader.pages):
+        txt = (page.extract_text() or "").strip()
+        if txt:
+            parts.append(f"[Page {i + 1}]\n{txt}")
+    return "\n\n".join(parts)
 
-# ==================== HELPERS ====================
-def get_or_create_user(user_id: str) -> dict:
-    with get_db() as conn:
-        row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
-        now = datetime.utcnow().isoformat()
-        if row:
-            conn.execute("UPDATE users SET last_seen = ? WHERE user_id = ?", (now, user_id))
-            conn.commit()
-            d = dict(row)
-            if "is_premium" not in d:
-                d["is_premium"] = 0
-            return d
-        conn.execute(
-            "INSERT INTO users (user_id, free_used, credits, is_premium, created_at, last_seen) VALUES (?, 0, 0, 0, ?, ?)",
-            (user_id, now, now)
-        )
-        conn.commit()
-        return {"user_id": user_id, "free_used": 0, "credits": 0, "is_premium": 0}
 
-def can_chat(user: dict) -> tuple[bool, str]:
-    free_left = max(0, FREE_MESSAGES - user["free_used"])
-    if free_left > 0:
-        return True, f"free:{free_left}"
-    if user["credits"] > 0:
-        return True, f"credit:{user['credits']}"
-    return False, "no_credits"
+async def build_contents(prompt: str, files: List[UploadFile]) -> List[Any]:
+    contents: List[Any] = []
+    text_notes: List[str] = []
 
-def consume_message(user_id: str):
-    with get_db() as conn:
-        user = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
-        if not user:
-            return
-        free_used = user["free_used"]
-        credits = user["credits"]
-        if free_used < FREE_MESSAGES:
-            conn.execute("UPDATE users SET free_used = free_used + 1 WHERE user_id = ?", (user_id,))
-        elif credits > 0:
-            conn.execute("UPDATE users SET credits = credits - 1 WHERE user_id = ?", (user_id,))
-        conn.commit()
+    for f in files or []:
+        raw = await f.read()
+        if not raw:
+            continue
+        mime = (f.content_type or "").lower()
+        filename = f.filename or "fichier"
 
-def call_gemini(message: str, history: Optional[List[Dict]] = None) -> str:
-    if not GEMINI_API_KEY:
-        return "⚠️ Clé API Gemini manquante. Configure la variable d'environnement GEMINI_API_KEY."
-
-    try:
-        model = genai.GenerativeModel(
-            model_name=GEMINI_MODEL,
-            system_instruction=(
-                "Tu es HAIDARA AI, un assistant intelligent, poli, clair et utile. "
-                "Tu réponds en français par défaut, sauf si l'utilisateur écrit dans une autre langue. "
-                "Sois concis mais complet. Utilise un style moderne et agréable."
+        if mime.startswith("image/"):
+            contents.append(
+                types.Part.from_bytes(
+                    data=raw,
+                    mime_type=mime,
+                )
             )
-        )
-
-        # Build history for multi-turn
-        chat_history = []
-        if history:
-            for h in history[-10:]:  # last 10 messages max
-                role = "user" if h.get("role") == "user" else "model"
-                chat_history.append({"role": role, "parts": [h.get("content", "")]})
-
-        if chat_history:
-            chat = model.start_chat(history=chat_history)
-            response = chat.send_message(message)
+        elif mime == "application/pdf" or filename.lower().endswith(".pdf"):
+            extracted = extract_text_from_pdf(raw)
+            if extracted:
+                text_notes.append(f"--- Contenu PDF ({filename}) ---\n{extracted[:12000]}")
+            else:
+                contents.append(
+                    types.Part.from_bytes(
+                        data=raw,
+                        mime_type="application/pdf",
+                    )
+                )
         else:
-            response = model.generate_content(message)
+            decoded = raw.decode("utf-8", errors="ignore").strip()
+            if decoded:
+                text_notes.append(f"--- Fichier ({filename}) ---\n{decoded[:12000]}")
 
-        return response.text or "Désolé, je n'ai pas pu générer de réponse."
+    full_prompt = prompt.strip() if prompt else "Analyse les éléments fournis."
+    if text_notes:
+        full_prompt = f"{full_prompt}\n\n" + "\n\n".join(text_notes)
 
-    except Exception as e:
-        err = str(e)
-        if "API_KEY" in err.upper() or "401" in err or "403" in err:
-            return "⚠️ Problème avec la clé API Gemini. Vérifie qu'elle est valide et active."
-        if "quota" in err.lower() or "rate" in err.lower():
-            return "⚠️ Quota Gemini dépassé temporairement. Réessaie dans quelques minutes."
-        return f"⚠️ Erreur Gemini : {err[:200]}"
+    contents.append(full_prompt)
+    return contents
 
-# ==================== ROUTES ====================
+
+def generate_with_failover(contents: List[Any]) -> Dict[str, Any]:
+    api_keys = get_api_keys()
+    if not api_keys:
+        raise RuntimeError("Aucune clé GEMINI_API_KEY configurée sur Render.")
+
+    last_error = "Erreur inconnue"
+    for key in api_keys:
+        client = genai.Client(api_key=key)
+        for model in TEXT_MODELS:
+            try:
+                resp = client.models.generate_content(
+                    model=model,
+                    contents=contents,
+                )
+                reply = (resp.text or "").strip()
+                if reply:
+                    return {"reply": reply, "model": model}
+            except Exception as exc:
+                last_error = str(exc)
+                continue
+
+    raise RuntimeError(f"Toutes les clés ou modèles ont échoué : {last_error}")
+
+
+def generate_image_with_failover(prompt: str) -> Dict[str, Any]:
+    api_keys = get_api_keys()
+    if not api_keys:
+        raise RuntimeError("Aucune clé GEMINI_API_KEY configurée sur Render.")
+
+    last_error = "Erreur génération image"
+    for key in api_keys:
+        client = genai.Client(api_key=key)
+        for model in IMAGE_MODELS:
+            try:
+                if model.startswith("imagen"):
+                    res = client.models.generate_images(
+                        model=model,
+                        prompt=prompt,
+                        config=types.GenerateImagesConfig(
+                            number_of_images=1,
+                            output_mime_type="image/png",
+                        ),
+                    )
+                    if res.generated_images:
+                        img_bytes = res.generated_images[0].image.image_bytes
+                        b64 = base64.b64encode(img_bytes).decode("utf-8")
+                        return {
+                            "image_base64": b64,
+                            "mime_type": "image/png",
+                            "model": model,
+                        }
+                else:
+                    res = client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            response_modalities=["IMAGE", "TEXT"],
+                        ),
+                    )
+                    for cand in getattr(res, "candidates", []) or []:
+                        content = getattr(cand, "content", None)
+                        for part in getattr(content, "parts", []) or []:
+                            inline = getattr(part, "inline_data", None)
+                            if inline and getattr(inline, "data", None):
+                                raw_data = inline.data
+                                if isinstance(raw_data, bytes):
+                                    b64 = base64.b64encode(raw_data).decode("utf-8")
+                                else:
+                                    b64 = raw_data
+                                return {
+                                    "image_base64": b64,
+                                    "mime_type": getattr(inline, "mime_type", "image/png"),
+                                    "model": model,
+                                }
+            except Exception as exc:
+                last_error = str(exc)
+                continue
+
+    raise RuntimeError(f"Génération d'image impossible : {last_error}")
+
+
+class PaymentSubmit(BaseModel):
+    phone: str
+    amount: str
+    reference: str
+    plan: Optional[str] = "Standard"
+
+
+class AdminAction(BaseModel):
+    password: str
+    payment_id: Optional[str] = None
+    status: Optional[str] = None
+
+
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    return templates.TemplateResponse("index.html", {
-        "request": request,
-        "orange_number": ORANGE_MONEY_NUMBER,
-        "free_messages": FREE_MESSAGES,
-        "packs": PACKS,
-    })
+    return templates.TemplateResponse("index.html", {"request": request})
 
-@app.get("/api/status")
-async def status(user_id: str):
-    user = get_or_create_user(user_id)
-    free_left = max(0, FREE_MESSAGES - user["free_used"])
-    return {
-        "user_id": user_id,
-        "free_left": free_left,
-        "credits": user["credits"],
-        "is_premium": bool(user.get("is_premium")),
-        "can_chat": free_left > 0 or user["credits"] > 0,
-        "orange_number": ORANGE_MONEY_NUMBER,
-        "packs": PACKS,
-    }
 
-@app.post("/chat")
-async def chat(payload: ChatRequest):
-    user = get_or_create_user(payload.user_id)
-    allowed, reason = can_chat(user)
-
-    if not allowed:
-        return JSONResponse({
-            "error": "no_credits",
-            "message": "Tu as utilisé tes 10 messages gratuits. Achète un pack pour continuer.",
-            "free_left": 0,
-            "credits": 0
-        }, status_code=402)
-
-    # Call Gemini
-    reply = call_gemini(payload.message, payload.history)
-
-    # Consume only if success (not error message starting with ⚠️)
-    if not reply.startswith("⚠️"):
-        consume_message(payload.user_id)
-
-    # Refresh status
-    user = get_or_create_user(payload.user_id)
-    free_left = max(0, FREE_MESSAGES - user["free_used"])
-
-    return {
-        "reply": reply,
-        "free_left": free_left,
-        "credits": user["credits"],
-    }
-
-@app.post("/api/create-payment")
-async def create_payment(user_id: str = Form(...), pack_type: str = Form("standard")):
-    if pack_type not in PACKS:
-        raise HTTPException(400, "Pack invalide")
-
-    pack = PACKS[pack_type]
-    user = get_or_create_user(user_id)
-    reference = f"HAIDARA-{uuid.uuid4().hex[:8].upper()}"
-    now = datetime.utcnow().isoformat()
-
-    with get_db() as conn:
-        conn.execute(
-            "INSERT INTO payments (user_id, reference, pack_type, amount, messages, status, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)",
-            (user_id, reference, pack_type, pack["price"], pack["messages"], now)
-        )
-        conn.commit()
-
-    return {
-        "reference": reference,
-        "pack_type": pack_type,
-        "pack_name": pack["name"],
-        "amount": pack["price"],
-        "messages": pack["messages"],
-        "is_premium": pack["premium"],
-        "orange_number": ORANGE_MONEY_NUMBER,
-        "instructions": (
-            f"1. Ouvre Orange Money\n"
-            f"2. Envoie {pack['price']:,} GNF au numéro {ORANGE_MONEY_NUMBER}\n"
-            f"3. Mets comme motif / référence : {reference}\n"
-            f"4. Une fois le paiement fait, reviens ici et entre le code de transaction Orange Money."
-        )
-    }
-
-@app.post("/api/redeem")
-async def redeem(payload: RedeemRequest):
-    """L'utilisateur soumet son ID de transaction après paiement."""
-    with get_db() as conn:
-        payment = conn.execute(
-            "SELECT * FROM payments WHERE reference = ? AND user_id = ?",
-            (payload.reference, payload.user_id)
-        ).fetchone()
-
-        if not payment:
-            raise HTTPException(404, "Référence de paiement introuvable.")
-
-        if payment["status"] == "approved":
-            return {"message": "Ce paiement a déjà été validé. Les crédits sont déjà sur ton compte."}
-
-        # On enregistre le transaction_id et on laisse en pending pour validation admin
-        conn.execute(
-            "UPDATE payments SET transaction_id = ?, status = 'pending' WHERE id = ?",
-            (payload.transaction_id.strip(), payment["id"])
-        )
-        conn.commit()
-
-    return {
-        "message": (
-            "✅ Demande enregistrée !\n\n"
-            "Ton paiement est en cours de vérification. "
-            "Les crédits seront ajoutés dès que le propriétaire validera la transaction "
-            "(généralement sous 1h en journée).\n\n"
-            "Tu peux aussi contacter le propriétaire avec ton code de transaction pour accélérer."
-        ),
-        "status": "pending"
-    }
-
-@app.get("/admin")
+@app.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request):
     return templates.TemplateResponse("admin.html", {"request": request})
 
-@app.post("/api/admin/payments")
-async def list_payments(password: str = Form(...)):
-    if password != ADMIN_PASSWORD:
-        raise HTTPException(403, "Mot de passe incorrect")
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM payments ORDER BY created_at DESC LIMIT 50"
-        ).fetchall()
-    return [dict(r) for r in rows]
-
-@app.post("/api/admin/approve")
-async def approve_payment(payload: AdminApprove):
-    if payload.password != ADMIN_PASSWORD:
-        raise HTTPException(403, "Mot de passe incorrect")
-
-    with get_db() as conn:
-        payment = conn.execute("SELECT * FROM payments WHERE id = ?", (payload.payment_id,)).fetchone()
-        if not payment:
-            raise HTTPException(404, "Paiement introuvable")
-        if payment["status"] == "approved":
-            return {"message": "Déjà approuvé"}
-
-        pack_type = payment["pack_type"] if "pack_type" in payment.keys() else "standard"
-        is_premium = 1 if pack_type == "premium" else 0
-
-        # Add credits + premium flag
-        if is_premium:
-            conn.execute(
-                "UPDATE users SET credits = credits + ?, is_premium = 1 WHERE user_id = ?",
-                (payment["messages"], payment["user_id"])
-            )
-        else:
-            conn.execute(
-                "UPDATE users SET credits = credits + ? WHERE user_id = ?",
-                (payment["messages"], payment["user_id"])
-            )
-
-        conn.execute(
-            "UPDATE payments SET status = 'approved', approved_at = ? WHERE id = ?",
-            (datetime.utcnow().isoformat(), payload.payment_id)
-        )
-        conn.commit()
-
-    pack_label = "Premium" if is_premium else "Standard"
-    return {"message": f"✅ Pack {pack_label} validé : {payment['messages']} crédits ajoutés."}
-
-@app.post("/api/admin/reject")
-async def reject_payment(payment_id: int = Form(...), password: str = Form(...)):
-    if password != ADMIN_PASSWORD:
-        raise HTTPException(403, "Mot de passe incorrect")
-    with get_db() as conn:
-        conn.execute(
-            "UPDATE payments SET status = 'rejected' WHERE id = ?",
-            (payment_id,)
-        )
-        conn.commit()
-    return {"message": "Paiement rejeté"}
-
-# Keep simple endpoints for compatibility
-@app.post("/upload")
-async def upload(file: UploadFile = File(...), message: str = Form(""), user_id: str = Form("anonymous")):
-    user = get_or_create_user(user_id)
-    allowed, _ = can_chat(user)
-    if not allowed:
-        return JSONResponse({"error": "no_credits", "reply": "Plus de crédits. Achète un pack."}, status_code=402)
-
-    content = await file.read()
-    # Simple text extraction attempt
-    try:
-        text = content.decode("utf-8", errors="ignore")[:4000]
-    except Exception:
-        text = "[Fichier binaire reçu]"
-
-    prompt = f"L'utilisateur a envoyé un fichier nommé {file.filename}. Contenu extrait :\n{text}\n\nQuestion de l'utilisateur : {message or 'Analyse ce fichier.'}"
-    reply = call_gemini(prompt)
-    if not reply.startswith("⚠️"):
-        consume_message(user_id)
-    return {"reply": reply}
-
-@app.post("/generate-image")
-async def generate_image(request: Request):
-    # Placeholder - real image gen needs Imagen or another service
-    body = await request.json()
-    prompt = body.get("prompt", "")
-    return {
-        "error": "La génération d'image n'est pas encore activée sur cette version. Utilise le chat pour décrire une image."
-    }
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "model": GEMINI_MODEL, "has_key": bool(GEMINI_API_KEY)}
+    return {"status": "ok", "keys_configured": len(get_api_keys())}
+
+
+@app.post("/api/chat")
+async def api_chat(
+    message: str = Form(""),
+    files: List[UploadFile] = File(default=[]),
+):
+    try:
+        contents = await build_contents(message, files)
+        result = generate_with_failover(contents)
+        return JSONResponse(result)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/generate-image")
+async def api_generate_image(prompt: str = Form(...)):
+    try:
+        result = generate_image_with_failover(prompt)
+        return JSONResponse(result)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/payments/submit")
+async def submit_payment(payload: PaymentSubmit):
+    payments = load_payments()
+    record = {
+        "id": str(uuid.uuid4())[:8],
+        "phone": payload.phone.strip(),
+        "amount": payload.amount.strip(),
+        "reference": payload.reference.strip(),
+        "plan": (payload.plan or "Standard").strip(),
+        "status": "pending",
+    }
+    payments.insert(0, record)
+    save_payments(payments)
+    return {"ok": True, "payment": record}
+
+
+@app.post("/api/admin/payments")
+async def list_payments(payload: AdminAction):
+    if payload.password != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="Mot de passe admin incorrect.")
+    return {"ok": True, "payments": load_payments()}
+
+
+@app.post("/api/admin/payments/update")
+async def update_payment(payload: AdminAction):
+    if payload.password != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="Mot de passe admin incorrect.")
+    if not payload.payment_id or payload.status not in {"approved", "rejected", "pending"}:
+        raise HTTPException(status_code=400, detail="Données de mise à jour invalides.")
+
+    payments = load_payments()
+    for p in payments:
+        if p["id"] == payload.payment_id:
+            p["status"] = payload.status
+            save_payments(payments)
+            return {"ok": True, "payment": p}
+
+    raise HTTPException(status_code=404, detail="Paiement introuvable.")
