@@ -6,7 +6,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
-from fastapi import FastAPI, Request, UploadFile, File, HTTPException
+from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
