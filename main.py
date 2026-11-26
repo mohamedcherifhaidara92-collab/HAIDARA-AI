@@ -1,7 +1,3 @@
-"""
-HAIDARA AI - Backend FastAPI
-Interface blanche style Grok + Gemini 3.8 Flash + crédits Orange Money
-"""
 import os
 import json
 import uuid
