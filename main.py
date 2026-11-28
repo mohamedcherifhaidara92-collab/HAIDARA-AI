@@ -23,17 +23,33 @@ PAYMENTS_FILE = DATA_DIR / "payments.json"
 app = FastAPI(title="HAIDARA AI")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "sitan@").strip()
+ADMIN_PHONE = os.getenv("ADMIN_PHONE", "+224629600906").strip()
+
+
+def normalize_phone(value: str) -> str:
+    return "".join(ch for ch in (value or "") if ch.isdigit())
+
+
+def is_admin_authorized(password: Optional[str], phone: Optional[str] = None) -> bool:
+    if (password or "").strip() != ADMIN_PASSWORD:
+        return False
+    if ADMIN_PHONE:
+        return normalize_phone(phone or "") == normalize_phone(ADMIN_PHONE)
+    return True
+
 
 TEXT_MODELS = [
+    "gemini-3.5-flash-lite",
+    "gemini-3.8-flash",
+    "gemini-4-hydrogen",
     "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-pro",
 ]
 
 IMAGE_MODELS = [
-    "imagen-3.0-generate-002",
+    "gemini-3.1-flash-lite-image",
     "gemini-2.5-flash-image",
+    "gemini-3.1-flash-image",
 ]
 
 
@@ -155,46 +171,28 @@ def generate_image_with_failover(prompt: str) -> Dict[str, Any]:
         client = genai.Client(api_key=key)
         for model in IMAGE_MODELS:
             try:
-                if model.startswith("imagen"):
-                    res = client.models.generate_images(
-                        model=model,
-                        prompt=prompt,
-                        config=types.GenerateImagesConfig(
-                            number_of_images=1,
-                            output_mime_type="image/png",
-                        ),
-                    )
-                    if res.generated_images:
-                        img_bytes = res.generated_images[0].image.image_bytes
-                        b64 = base64.b64encode(img_bytes).decode("utf-8")
-                        return {
-                            "image_base64": b64,
-                            "mime_type": "image/png",
-                            "model": model,
-                        }
-                else:
-                    res = client.models.generate_content(
-                        model=model,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(
-                            response_modalities=["IMAGE", "TEXT"],
-                        ),
-                    )
-                    for cand in getattr(res, "candidates", []) or []:
-                        content = getattr(cand, "content", None)
-                        for part in getattr(content, "parts", []) or []:
-                            inline = getattr(part, "inline_data", None)
-                            if inline and getattr(inline, "data", None):
-                                raw_data = inline.data
-                                if isinstance(raw_data, bytes):
-                                    b64 = base64.b64encode(raw_data).decode("utf-8")
-                                else:
-                                    b64 = raw_data
-                                return {
-                                    "image_base64": b64,
-                                    "mime_type": getattr(inline, "mime_type", "image/png"),
-                                    "model": model,
-                                }
+                res = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_modalities=["IMAGE", "TEXT"],
+                    ),
+                )
+                for cand in getattr(res, "candidates", []) or []:
+                    content = getattr(cand, "content", None)
+                    for part in getattr(content, "parts", []) or []:
+                        inline = getattr(part, "inline_data", None)
+                        if inline and getattr(inline, "data", None):
+                            raw_data = inline.data
+                            if isinstance(raw_data, bytes):
+                                b64 = base64.b64encode(raw_data).decode("utf-8")
+                            else:
+                                b64 = raw_data
+                            return {
+                                "image_base64": b64,
+                                "mime_type": getattr(inline, "mime_type", "image/png"),
+                                "model": model,
+                            }
             except Exception as exc:
                 last_error = str(exc)
                 continue
@@ -216,10 +214,9 @@ def _render_template_safe(request: Request, filename: str, fallback_title: str) 
     except Exception as exc:
         return HTMLResponse(
             content=(
-                f"<html><body style='font-family:sans-serif;background:#0b1120;color:#fff;padding:24px;'>"
+                f"<html><body style='font-family:sans-serif;background:#ffffff;color:#0f172a;padding:24px;'>"
                 f"<h2>{fallback_title}</h2>"
-                f"<p>Le serveur est actif, mais le fichier <b>{filename}</b> n'a pas pu être chargé ({exc}).</p>"
-                f"<p>Vérifie que <b>{filename}</b> est bien présent dans le dépôt.</p>"
+                f"<p>Le fichier <b>{filename}</b> est introuvable ({exc}).</p>"
                 f"</body></html>"
             ),
             status_code=200,
@@ -234,6 +231,7 @@ class PaymentSubmit(BaseModel):
 
 
 class AdminAction(BaseModel):
+    phone: Optional[str] = ""
     password: str
     payment_id: Optional[str] = None
     status: Optional[str] = None
@@ -251,7 +249,11 @@ async def admin_page(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "keys_configured": len(get_api_keys())}
+    return {
+        "status": "ok",
+        "keys_configured": len(get_api_keys()),
+        "admin_phone_required": bool(ADMIN_PHONE),
+    }
 
 
 @app.post("/api/chat")
@@ -294,15 +296,15 @@ async def submit_payment(payload: PaymentSubmit):
 
 @app.post("/api/admin/payments")
 async def list_payments(payload: AdminAction):
-    if payload.password != ADMIN_PASSWORD:
-        raise HTTPException(status_code=401, detail="Mot de passe admin incorrect.")
+    if not is_admin_authorized(payload.password, payload.phone):
+        raise HTTPException(status_code=401, detail="Numéro ou mot de passe admin incorrect.")
     return {"ok": True, "payments": load_payments()}
 
 
 @app.post("/api/admin/payments/update")
 async def update_payment(payload: AdminAction):
-    if payload.password != ADMIN_PASSWORD:
-        raise HTTPException(status_code=401, detail="Mot de passe admin incorrect.")
+    if not is_admin_authorized(payload.password, payload.phone):
+        raise HTTPException(status_code=401, detail="Numéro ou mot de passe admin incorrect.")
     if not payload.payment_id or payload.status not in {"approved", "rejected", "pending"}:
         raise HTTPException(status_code=400, detail="Données de mise à jour invalides.")
 
