@@ -15,7 +15,7 @@ from google import genai
 from google.genai import types
 
 BASE_DIR = Path(__file__).resolve().parent
-TEMPLATES_DIR = BASE_DIR
+TEMPLATES_DIR = BASE_DIR / "templates" if (BASE_DIR / "templates").exists() else BASE_DIR
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 PAYMENTS_FILE = DATA_DIR / "payments.json"
@@ -202,6 +202,30 @@ def generate_image_with_failover(prompt: str) -> Dict[str, Any]:
     raise RuntimeError(f"Génération d'image impossible : {last_error}")
 
 
+def _render_template_safe(request: Request, filename: str, fallback_title: str) -> HTMLResponse:
+    candidate_dirs = [BASE_DIR / "templates", BASE_DIR]
+    for folder in candidate_dirs:
+        file_path = folder / filename
+        if file_path.exists():
+            try:
+                return HTMLResponse(content=file_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+    try:
+        return templates.TemplateResponse(request, filename, {"request": request})
+    except Exception as exc:
+        return HTMLResponse(
+            content=(
+                f"<html><body style='font-family:sans-serif;background:#0b1120;color:#fff;padding:24px;'>"
+                f"<h2>{fallback_title}</h2>"
+                f"<p>Le serveur est actif, mais le fichier <b>{filename}</b> n'a pas pu être chargé ({exc}).</p>"
+                f"<p>Vérifie que <b>{filename}</b> est bien présent dans le dépôt.</p>"
+                f"</body></html>"
+            ),
+            status_code=200,
+        )
+
+
 class PaymentSubmit(BaseModel):
     phone: str
     amount: str
@@ -217,12 +241,12 @@ class AdminAction(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    return templates.TemplateResponse(request, "index.html", {"request": request})
+    return _render_template_safe(request, "index.html", "HAIDARA AI")
 
 
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request):
-    return templates.TemplateResponse(request, "admin.html", {"request": request})
+    return _render_template_safe(request, "admin.html", "HAIDARA AI — Admin")
 
 
 @app.get("/health")
