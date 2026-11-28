@@ -1,233 +1,137 @@
-import os
-import io
-import time
-import base64
-from typing import List, Optional
-from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel
-from google import genai
-from google.genai import types
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HAIDARA AI — Admin</title>
+  <style>
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { margin: 0; background: #ffffff; color: #1f1f1f; padding: 24px 16px; }
+    .container { max-width: 820px; margin: 0 auto; }
+    .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; gap: 10px; }
+    h1 { margin: 0; font-size: 22px; }
+    .link-btn { border: 1px solid #dde3ea; background: #ffffff; color: #1f1f1f; padding: 8px 14px; border-radius: 999px; text-decoration: none; font-size: 13px; font-weight: 600; }
+    .auth-box { border: 1px solid #e2e8f0; background: #f8fafd; border-radius: 16px; padding: 18px; display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin-bottom: 20px; }
+    .field { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 180px; }
+    .field label { font-size: 12px; font-weight: 600; color: #334155; }
+    .field input { border: 1px solid #cbd5e1; border-radius: 10px; padding: 9px 12px; font-size: 14px; background: #ffffff; }
+    .btn { border: none; background: #0b57d0; color: #ffffff; padding: 10px 16px; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .msg { font-size: 13px; margin-bottom: 14px; color: #dc2626; font-weight: 500; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border-bottom: 1px solid #e5e7eb; padding: 10px 8px; text-align: left; }
+    th { background: #f8fafd; font-weight: 700; }
+    .action-btn { border: 1px solid #cbd5e1; background: #ffffff; padding: 5px 9px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; margin-right: 4px; }
+    .approve { border-color: #86efac; color: #15803d; background: #f0fdf4; }
+    .reject { border-color: #fca5a5; color: #b91c1c; background: #fef2f2; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="top">
+      <h1>Gestion des paiements — HAIDARA AI</h1>
+      <a href="/" class="link-btn">Retour au chat</a>
+    </div>
 
-app = FastAPI(title="HAIDARA AI")
+    <div class="auth-box">
+      <div class="field">
+        <label>Numéro de téléphone admin</label>
+        <input id="adminPhone" type="text" value="+224629600906" placeholder="Ex: +224629600906" />
+      </div>
+      <div class="field">
+        <label>Mot de passe admin</label>
+        <input id="adminPass" type="password" value="sitan@" placeholder="Mot de passe" />
+      </div>
+      <button type="button" class="btn" onclick="loadList()">Charger</button>
+    </div>
 
-# Stockage simple en mémoire pour les paiements (à remplacer par une base de données si besoin)
-PAYMENTS: List[dict] = []
+    <div id="msg" class="msg"></div>
 
-TEXT_MODELS = [
-    "gemini-3.8-flash",
-    "gemini-3.5-flash-lite",
-]
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Numéro</th>
+          <th>Offre</th>
+          <th>Montant</th>
+          <th>Référence</th>
+          <th>Statut</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
 
-IMAGE_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-preview-image")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
-ORANGE_MONEY_NUMBER = os.getenv("ORANGE_MONEY_NUMBER", "000000000")
-
-
-def get_api_keys() -> List[str]:
-    keys = []
-    for env_name in ["GEMINI_API_KEY", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3", "GEMINI_API_KEY_4"]:
-        val = os.getenv(env_name, "").strip()
-        if val and val not in keys:
-            keys.append(val)
-    return keys
-
-
-def generate_text_with_failover(prompt: str, extra_parts: Optional[list] = None) -> str:
-    keys = get_api_keys()
-    if not keys:
-        raise RuntimeError("Aucune clé API Gemini configurée dans l'environnement.")
-
-    last_error = None
-    for api_key in keys:
-        client = genai.Client(api_key=api_key)
-        for model_name in TEXT_MODELS:
-            for attempt in range(2):
-                try:
-                    contents = [prompt]
-                    if extra_parts:
-                        contents.extend(extra_parts)
-                    response = client.models.generate_content(
-                        model=model_name,
-                        contents=contents,
-                    )
-                    if response and response.text:
-                        return response.text
-                except Exception as exc:
-                    last_error = exc
-                    msg = str(exc).lower()
-                    # Si surcharge (503) ou quota (429), on attend un peu et on réessaie / bascule
-                    if "503" in msg or "429" in msg or "quota" in msg or "resource_exhausted" in msg:
-                        time.sleep(1.5 * (attempt + 1))
-                        continue
-                    break
-
-    raise RuntimeError(f"Toutes les clés/modèles ont échoué : {last_error}")
-
-
-def extract_pdf_text(data: bytes) -> str:
-    try:
-        from pypdf import PdfReader
-        reader = PdfReader(io.BytesIO(data))
-        pages = [page.extract_text() or "" for page in reader.pages]
-        return "\n".join(pages).strip()
-    except Exception:
-        return ""
-
-
-@app.get("/", response_class=HTMLResponse)
-def home():
-    for path in ["templates/index.html", "index.html"]:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                return HTMLResponse(f.read())
-    return HTMLResponse("<h1>HAIDARA AI</h1><p>Fichier index.html introuvable.</p>", status_code=404)
-
-
-@app.get("/admin", response_class=HTMLResponse)
-def admin_page():
-    for path in ["admin.html", "templates/admin.html"]:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                return HTMLResponse(f.read())
-    return HTMLResponse("<h1>Admin</h1><p>Fichier admin.html introuvable.</p>", status_code=404)
-
-
-class ChatRequest(BaseModel):
-    message: str
-
-
-@app.post("/api/chat")
-async def chat_endpoint(payload: ChatRequest):
-    try:
-        reply = generate_text_with_failover(payload.message)
-        return {"reply": reply}
-    except Exception as e:
-        return JSONResponse(status_code=503, content={"error": str(e)})
-
-
-@app.post("/api/chat-files")
-async def chat_with_files(
-    message: str = Form("Analyse ces fichiers et réponds clairement."),
-    files: List[UploadFile] = File(default=[]),
-):
-    extra_parts = []
-    extracted_notes = []
-
-    for up in files:
-        raw = await up.read()
-        ctype = up.content_type or ""
-        filename = up.filename or "fichier"
-
-        if ctype.startswith("image/"):
-            extra_parts.append(types.Part.from_bytes(data=raw, mime_type=ctype))
-        elif filename.lower().endswith(".pdf") or ctype == "application/pdf":
-            pdf_txt = extract_pdf_text(raw)
-            if pdf_txt:
-                extracted_notes.append(f"[PDF: {filename}]\n{pdf_txt[:12000]}")
-            else:
-                extra_parts.append(types.Part.from_bytes(data=raw, mime_type="application/pdf"))
-        else:
-            try:
-                txt = raw.decode("utf-8", errors="ignore")
-                extracted_notes.append(f"[Fichier: {filename}]\n{txt[:8000]}")
-            except Exception:
-                extracted_notes.append(f"[Fichier reçu: {filename}, {len(raw)} octets]")
-
-    full_prompt = message
-    if extracted_notes:
-        full_prompt = f"{message}\n\n" + "\n\n".join(extracted_notes)
-
-    try:
-        reply = generate_text_with_failover(full_prompt, extra_parts=extra_parts)
-        return {"reply": reply}
-    except Exception as e:
-        return JSONResponse(status_code=503, content={"error": str(e)})
-
-
-class ImageRequest(BaseModel):
-    prompt: str
-
-
-@app.post("/api/generate-image")
-async def generate_image_endpoint(payload: ImageRequest):
-    keys = get_api_keys()
-    if not keys:
-        return JSONResponse(status_code=500, content={"error": "Aucune clé API configurée."})
-
-    for api_key in keys:
-        try:
-            client = genai.Client(api_key=api_key)
-            res = client.models.generate_content(
-                model=IMAGE_MODEL,
-                contents=payload.prompt,
-                config=types.GenerateContentConfig(
-                    response_modalities=["IMAGE", "TEXT"],
-                ),
-            )
-            for cand in getattr(res, "candidates", []) or []:
-                for part in getattr(cand.content, "parts", []) or []:
-                    inline = getattr(part, "inline_data", None)
-                    if inline and getattr(inline, "data", None):
-                        b64 = base64.b64encode(inline.data).decode("utf-8")
-                        mime = getattr(inline, "mime_type", "image/png")
-                        return {"image_base64": b64, "mime_type": mime}
-        except Exception:
-            continue
-
-    return JSONResponse(status_code=503, content={"error": "Impossible de générer l'image pour le moment."})
-
-
-class OrangeMoneyPayment(BaseModel):
-    sender_phone: str
-    amount: float
-    reference: Optional[str] = ""
-
-
-@app.get("/api/payment-info")
-def payment_info():
-    return {
-        "method": "Orange Money",
-        "receiver_number": ORANGE_MONEY_NUMBER,
-        "instructions": f"Envoyez le montant sur Orange Money au {ORANGE_MONEY_NUMBER}, puis renseignez votre numéro et la référence.",
+  <script>
+    function creds() {
+      return {
+        phone: document.getElementById("adminPhone").value.trim(),
+        password: document.getElementById("adminPass").value
+      };
     }
 
-
-@app.post("/api/payments/orange-money")
-def submit_orange_money(item: OrangeMoneyPayment):
-    record = {
-        "id": len(PAYMENTS) + 1,
-        "method": "Orange Money",
-        "receiver_number": ORANGE_MONEY_NUMBER,
-        "sender_phone": item.sender_phone,
-        "amount": item.amount,
-        "reference": item.reference or "En attente de référence",
-        "status": "pending",
+    async function loadList() {
+      const msg = document.getElementById("msg");
+      const tbody = document.getElementById("rows");
+      msg.textContent = "";
+      try {
+        const res = await fetch("/api/admin/payments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(creds())
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          tbody.innerHTML = "";
+          msg.textContent = data.detail || "Accès refusé.";
+          return;
+        }
+        renderRows(data.payments || []);
+      } catch {
+        msg.textContent = "Erreur réseau.";
+      }
     }
-    PAYMENTS.append(record)
-    return {"ok": True, "payment": record}
 
+    async function setStatus(paymentId, status) {
+      const msg = document.getElementById("msg");
+      msg.textContent = "";
+      try {
+        const res = await fetch("/api/admin/payments/update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...creds(), payment_id: paymentId, status })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          msg.textContent = data.detail || "Mise à jour impossible.";
+          return;
+        }
+        loadList();
+      } catch {
+        msg.textContent = "Erreur réseau.";
+      }
+    }
 
-@app.get("/api/admin/payments")
-def list_payments(password: str = ""):
-    if password != ADMIN_PASSWORD:
-        raise HTTPException(status_code=401, detail="Mot de passe admin invalide.")
-    return {"payments": PAYMENTS}
-
-
-class PaymentStatusUpdate(BaseModel):
-    password: str
-    status: str  # "approved" ou "rejected"
-
-
-@app.post("/api/admin/payments/{payment_id}/status")
-def update_payment_status(payment_id: int, body: PaymentStatusUpdate):
-    if body.password != ADMIN_PASSWORD:
-        raise HTTPException(status_code=401, detail="Mot de passe admin invalide.")
-    if body.status not in ("approved", "rejected", "pending"):
-        raise HTTPException(status_code=400, detail="Statut invalide.")
-    for p in PAYMENTS:
-        if p["id"] == payment_id:
-            p["status"] = body.status
-            return {"ok": True, "payment": p}
-    raise HTTPException(status_code=404, detail="Paiement introuvable.")
+    function renderRows(items) {
+      const tbody = document.getElementById("rows");
+      tbody.innerHTML = "";
+      items.forEach(p => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${p.id}</td>
+          <td>${p.phone}</td>
+          <td>${p.plan}</td>
+          <td>${p.amount}</td>
+          <td>${p.reference}</td>
+          <td><b>${p.status}</b></td>
+          <td>
+            <button type="button" class="action-btn approve" onclick="setStatus('${p.id}', 'approved')">Valider</button>
+            <button type="button" class="action-btn reject" onclick="setStatus('${p.id}', 'rejected')">Refuser</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+  </script>
+</body>
+</html>
