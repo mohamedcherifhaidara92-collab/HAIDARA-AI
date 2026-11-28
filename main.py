@@ -15,7 +15,7 @@ from google import genai
 from google.genai import types
 
 BASE_DIR = Path(__file__).resolve().parent
-TEMPLATES_DIR = BASE_DIR / "templates"
+TEMPLATES_DIR = BASE_DIR
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 PAYMENTS_FILE = DATA_DIR / "payments.json"
