@@ -107,23 +107,13 @@ async def build_contents(prompt: str, files: List[UploadFile]) -> List[Any]:
         filename = f.filename or "fichier"
 
         if mime.startswith("image/"):
-            contents.append(
-                types.Part.from_bytes(
-                    data=raw,
-                    mime_type=mime,
-                )
-            )
+            contents.append(types.Part.from_bytes(data=raw, mime_type=mime))
         elif mime == "application/pdf" or filename.lower().endswith(".pdf"):
             extracted = extract_text_from_pdf(raw)
             if extracted:
                 text_notes.append(f"--- Contenu PDF ({filename}) ---\n{extracted[:12000]}")
             else:
-                contents.append(
-                    types.Part.from_bytes(
-                        data=raw,
-                        mime_type="application/pdf",
-                    )
-                )
+                contents.append(types.Part.from_bytes(data=raw, mime_type="application/pdf"))
         else:
             decoded = raw.decode("utf-8", errors="ignore").strip()
             if decoded:
@@ -147,10 +137,7 @@ def generate_with_failover(contents: List[Any]) -> Dict[str, Any]:
         client = genai.Client(api_key=key)
         for model in TEXT_MODELS:
             try:
-                resp = client.models.generate_content(
-                    model=model,
-                    contents=contents,
-                )
+                resp = client.models.generate_content(model=model, contents=contents)
                 reply = (resp.text or "").strip()
                 if reply:
                     return {"reply": reply, "model": model}
@@ -174,9 +161,7 @@ def generate_image_with_failover(prompt: str) -> Dict[str, Any]:
                 res = client.models.generate_content(
                     model=model,
                     contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_modalities=["IMAGE", "TEXT"],
-                    ),
+                    config=types.GenerateContentConfig(response_modalities=["IMAGE", "TEXT"]),
                 )
                 for cand in getattr(res, "candidates", []) or []:
                     content = getattr(cand, "content", None)
@@ -184,10 +169,7 @@ def generate_image_with_failover(prompt: str) -> Dict[str, Any]:
                         inline = getattr(part, "inline_data", None)
                         if inline and getattr(inline, "data", None):
                             raw_data = inline.data
-                            if isinstance(raw_data, bytes):
-                                b64 = base64.b64encode(raw_data).decode("utf-8")
-                            else:
-                                b64 = raw_data
+                            b64 = base64.b64encode(raw_data).decode("utf-8") if isinstance(raw_data, bytes) else raw_data
                             return {
                                 "image_base64": b64,
                                 "mime_type": getattr(inline, "mime_type", "image/png"),
@@ -201,8 +183,7 @@ def generate_image_with_failover(prompt: str) -> Dict[str, Any]:
 
 
 def _render_template_safe(request: Request, filename: str, fallback_title: str) -> HTMLResponse:
-    candidate_dirs = [BASE_DIR / "templates", BASE_DIR]
-    for folder in candidate_dirs:
+    for folder in [BASE_DIR / "templates", BASE_DIR]:
         file_path = folder / filename
         if file_path.exists():
             try:
@@ -215,9 +196,7 @@ def _render_template_safe(request: Request, filename: str, fallback_title: str) 
         return HTMLResponse(
             content=(
                 f"<html><body style='font-family:sans-serif;background:#ffffff;color:#0f172a;padding:24px;'>"
-                f"<h2>{fallback_title}</h2>"
-                f"<p>Le fichier <b>{filename}</b> est introuvable ({exc}).</p>"
-                f"</body></html>"
+                f"<h2>{fallback_title}</h2><p>Fichier <b>{filename}</b> introuvable ({exc}).</p></body></html>"
             ),
             status_code=200,
         )
@@ -257,10 +236,7 @@ async def health():
 
 
 @app.post("/api/chat")
-async def api_chat(
-    message: str = Form(""),
-    files: List[UploadFile] = File(default=[]),
-):
+async def api_chat(message: str = Form(""), files: List[UploadFile] = File(default=[])):
     try:
         contents = await build_contents(message, files)
         result = generate_with_failover(contents)
