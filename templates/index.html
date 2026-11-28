@@ -3,230 +3,276 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>HAIDARA AI — Assistant Intelligent</title>
+  <title>HAIDARA AI</title>
   <style>
     * { box-sizing: border-box; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    body { margin: 0; background: #0b1120; color: #f8fafc; display: flex; flex-direction: column; min-height: 100vh; }
-    header { background: #111827; border-bottom: 1px solid #1f2937; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; position: sticky; top: 0; z-index: 10; }
-    .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 18px; letter-spacing: 0.5px; }
-    .brand span { background: linear-gradient(135deg, #3b82f6, #06b6d4); padding: 4px 10px; border-radius: 8px; font-size: 13px; color: #fff; }
-    .nav-actions { display: flex; gap: 10px; align-items: center; }
-    .btn { padding: 9px 14px; border-radius: 8px; border: none; cursor: pointer; font-weight: 600; font-size: 14px; transition: opacity 0.2s; }
-    .btn:hover { opacity: 0.9; }
-    .btn-orange { background: #f97316; color: #fff; }
-    .btn-secondary { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; }
-    .btn-primary { background: #2563eb; color: #fff; }
-    .btn-purple { background: #7c3aed; color: #fff; }
-    main { flex: 1; max-width: 920px; width: 100%; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
-    .chat-box { flex: 1; background: #111827; border: 1px solid #1f2937; border-radius: 14px; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; min-height: 55vh; max-height: 68vh; }
-    .msg { max-width: 85%; padding: 12px 15px; border-radius: 12px; line-height: 1.5; font-size: 15px; white-space: pre-wrap; word-wrap: break-word; }
-    .msg.user { align-self: flex-end; background: #2563eb; color: #fff; border-bottom-right-radius: 4px; }
-    .msg.ai { align-self: flex-start; background: #1e293b; color: #f1f5f9; border: 1px solid #334155; border-bottom-left-radius: 4px; }
-    .msg .meta { font-size: 11px; opacity: 0.7; margin-top: 6px; display: block; }
-    .msg img { max-width: 100%; border-radius: 10px; margin-top: 8px; display: block; border: 1px solid #334155; }
-    .composer { background: #111827; border: 1px solid #1f2937; border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-    .file-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13px; color: #94a3b8; }
-    .file-label { background: #1e293b; border: 1px dashed #475569; padding: 6px 12px; border-radius: 8px; cursor: pointer; color: #e2e8f0; display: inline-flex; align-items: center; gap: 6px; }
+    body { margin: 0; background: #ffffff; color: #0f172a; display: flex; flex-direction: column; min-height: 100vh; }
+    header { position: sticky; top: 0; z-index: 20; background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(10px); border-bottom: 1px solid #e5e7eb; padding: 12px 18px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .brand { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; color: #0f172a; display: flex; align-items: center; gap: 8px; }
+    .brand-dot { width: 10px; height: 10px; border-radius: 999px; background: #111827; }
+    .header-actions { display: flex; align-items: center; gap: 8px; }
+    .pill-btn { border: 1px solid #e5e7eb; background: #ffffff; color: #111827; padding: 7px 13px; border-radius: 999px; font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none; transition: background 0.15s, border-color 0.15s; }
+    .pill-btn:hover { background: #f9fafb; border-color: #d1d5db; }
+    .pill-orange { border-color: #fed7aa; background: #fff7ed; color: #c2410c; }
+    .pill-orange:hover { background: #ffedd5; }
+
+    main { flex: 1; width: 100%; max-width: 780px; margin: 0 auto; padding: 20px 16px 28px; display: flex; flex-direction: column; gap: 18px; }
+    .chat-stream { flex: 1; display: flex; flex-direction: column; gap: 18px; padding-bottom: 12px; }
+    .welcome { text-align: center; padding: 36px 12px 16px; }
+    .welcome h1 { margin: 0 0 8px; font-size: 28px; font-weight: 700; letter-spacing: -0.03em; color: #0f172a; }
+    .welcome p { margin: 0; font-size: 15px; color: #64748b; }
+
+    .msg-row { display: flex; flex-direction: column; gap: 6px; }
+    .msg-row.user { align-items: flex-end; }
+    .msg-row.ai { align-items: flex-start; }
+    .bubble { max-width: 88%; padding: 12px 16px; border-radius: 20px; font-size: 15px; line-height: 1.55; white-space: pre-wrap; word-wrap: break-word; }
+    .msg-row.user .bubble { background: #f1f5f9; color: #0f172a; border-bottom-right-radius: 6px; }
+    .msg-row.ai .bubble { background: #ffffff; color: #0f172a; border: 1px solid #e5e7eb; border-bottom-left-radius: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .bubble img { max-width: 100%; border-radius: 14px; margin-top: 10px; display: block; border: 1px solid #e5e7eb; }
+    .msg-meta { font-size: 11px; color: #94a3b8; padding: 0 6px; }
+
+    .composer-wrap { position: sticky; bottom: 12px; background: #ffffff; border: 1px solid #d1d5db; border-radius: 24px; padding: 10px 14px; box-shadow: 0 6px 24px rgba(15, 23, 42, 0.06); display: flex; flex-direction: column; gap: 8px; }
+    .attached-bar { display: none; align-items: center; justify-content: space-between; gap: 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 6px 10px; font-size: 12px; color: #334155; }
+    .attached-bar.visible { display: flex; }
+    .composer-top { display: flex; align-items: flex-end; gap: 8px; }
+    textarea { flex: 1; border: none; outline: none; background: transparent; color: #0f172a; font-size: 15px; line-height: 1.45; resize: none; max-height: 140px; min-height: 28px; padding: 4px 2px; }
+    .icon-btn { width: 36px; height: 36px; border-radius: 999px; border: 1px solid #e5e7eb; background: #ffffff; color: #334155; font-size: 16px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .icon-btn:hover { background: #f8fafc; }
+    .send-btn { height: 36px; padding: 0 14px; border-radius: 999px; border: none; background: #111827; color: #ffffff; font-size: 13px; font-weight: 600; cursor: pointer; flex-shrink: 0; }
+    .send-btn:hover { background: #1f2937; }
+    .composer-bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding-top: 2px; }
+    .mode-btn { border: 1px solid #e5e7eb; background: #f8fafc; color: #334155; padding: 5px 11px; border-radius: 999px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .mode-btn:hover { background: #f1f5f9; }
     input[type="file"] { display: none; }
-    .input-row { display: flex; gap: 8px; flex-wrap: wrap; }
-    textarea { flex: 1; min-width: 220px; background: #0f172a; border: 1px solid #334155; border-radius: 10px; color: #fff; padding: 10px 12px; font-size: 15px; resize: none; height: 48px; }
-    textarea:focus { outline: none; border-color: #3b82f6; }
-    .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.75); z-index: 50; align-items: center; justify-content: center; padding: 16px; }
-    .modal-backdrop.open { display: flex; }
-    .modal { background: #1e293b; border: 1px solid #334155; border-radius: 14px; max-width: 440px; width: 100%; padding: 20px; }
-    .modal h3 { margin-top: 0; color: #f97316; }
-    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
-    .field label { font-size: 13px; color: #cbd5e1; }
-    .field input, .field select { padding: 10px; border-radius: 8px; border: 1px solid #475569; background: #0f172a; color: #fff; font-size: 14px; }
-    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
-    .pay-status { font-size: 13px; margin-top: 8px; color: #4ade80; }
+
+    .modal-bg { display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); z-index: 50; align-items: center; justify-content: center; padding: 16px; }
+    .modal-bg.open { display: flex; }
+    .modal-card { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 20px; width: 100%; max-width: 420px; padding: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.12); }
+    .modal-card h3 { margin: 0 0 6px; font-size: 18px; color: #0f172a; }
+    .modal-card p { margin: 0 0 14px; font-size: 13px; color: #64748b; }
+    .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+    .field label { font-size: 12px; font-weight: 600; color: #334155; }
+    .field input, .field select { border: 1px solid #cbd5e1; border-radius: 10px; padding: 9px 11px; font-size: 14px; color: #0f172a; background: #ffffff; }
+    .modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+    .status-msg { font-size: 13px; margin-top: 8px; font-weight: 500; }
   </style>
 </head>
 <body>
   <header>
-    <div class="brand">HAIDARA AI <span>PRO</span></div>
-    <div class="nav-actions">
-      <button class="btn btn-orange" onclick="openPayModal()">Orange Money</button>
-      <a href="/admin" class="btn btn-secondary" style="text-decoration:none;">Admin</a>
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <span>HAIDARA AI</span>
+    </div>
+    <div class="header-actions">
+      <button class="pill-btn pill-orange" onclick="openModal()">Orange Money</button>
+      <a href="/admin" class="pill-btn">Admin</a>
     </div>
   </header>
 
   <main>
-    <div id="chatBox" class="chat-box">
-      <div class="msg ai">Bonjour ! Je suis <strong>HAIDARA AI</strong>. Pose-moi une question, envoie un fichier (PDF, image, texte) ou clique sur <strong>Créer une image</strong>.</div>
+    <div id="chatStream" class="chat-stream">
+      <div class="welcome">
+        <h1>Comment puis-je t'aider ?</h1>
+        <p>Pose une question, joins un fichier ou génère une image.</p>
+      </div>
     </div>
 
-    <div class="composer">
-      <div class="file-bar">
-        <label class="file-label" for="fileInput">📎 Joindre fichiers (Images, PDF, TXT)</label>
-        <input id="fileInput" type="file" multiple accept="image/*,.pdf,.txt,.csv,.md,.py,.js,.html" onchange="updateFileList()" />
-        <span id="fileList">Aucun fichier sélectionné</span>
+    <div class="composer-wrap">
+      <div id="attachedBar" class="attached-bar">
+        <span id="attachedText"></span>
+        <button type="button" class="mode-btn" onclick="clearFiles()">Retirer</button>
       </div>
-      <div class="input-row">
-        <textarea id="promptInput" placeholder="Écris ton message ou décris l'image à générer..." onkeydown="handleKey(event)"></textarea>
-        <button id="sendBtn" class="btn btn-primary" onclick="sendMessage()">Envoyer</button>
-        <button id="imgBtn" class="btn btn-purple" onclick="generateImage()">Créer une image</button>
+
+      <div class="composer-top">
+        <label class="icon-btn" for="fileInput" title="Joindre un fichier">+</label>
+        <input id="fileInput" type="file" multiple accept="image/*,.pdf,.txt,.csv,.md,.py,.js,.html" onchange="onFilesChange()" />
+        <textarea id="promptBox" rows="1" placeholder="Demande à HAIDARA AI..." oninput="autoResize(this)" onkeydown="onKeyDown(event)"></textarea>
+        <button id="sendBtn" class="send-btn" onclick="sendChat()">Envoyer</button>
+      </div>
+
+      <div class="composer-bottom">
+        <button type="button" class="mode-btn" onclick="generateImg()">Créer une image</button>
+        <span style="font-size:11px; color:#94a3b8;">Entrée pour envoyer · Maj+Entrée pour nouvelle ligne</span>
       </div>
     </div>
   </main>
 
-  <div id="payModal" class="modal-backdrop">
-    <div class="modal">
+  <div id="payModal" class="modal-bg">
+    <div class="modal-card">
       <h3>Paiement Orange Money</h3>
-      <p style="font-size:13px; color:#cbd5e1; margin-top:0;">Envoie ton transfert Orange Money puis renseigne les détails ci-dessous pour validation rapide.</p>
+      <p>Renseigne les informations de transfert pour soumettre ta preuve.</p>
       <div class="field">
-        <label>Offre choisie</label>
+        <label>Offre</label>
         <select id="payPlan">
           <option value="Pass Journalier">Pass Journalier</option>
           <option value="Pass Hebdomadaire">Pass Hebdomadaire</option>
-          <option value="Pass Mensuel Pro" selected>Pass Mensuel Pro</option>
+          <option value="Pass Mensuel" selected>Pass Mensuel</option>
         </select>
       </div>
       <div class="field">
-        <label>Numéro Orange Money utilisé</label>
+        <label>Numéro Orange Money</label>
         <input id="payPhone" type="text" placeholder="Ex: 620 00 00 00" />
       </div>
       <div class="field">
-        <label>Montant envoyé (GNF)</label>
+        <label>Montant</label>
         <input id="payAmount" type="text" placeholder="Ex: 50 000 GNF" />
       </div>
       <div class="field">
-        <label>ID / Référence de la transaction SMS</label>
-        <input id="payRef" type="text" placeholder="Ex: PP261126.2215.A12345" />
+        <label>Référence de transaction</label>
+        <input id="payRef" type="text" placeholder="Ex: PP261128.0725.A12345" />
       </div>
-      <div id="payStatus" class="pay-status"></div>
-      <div class="modal-actions">
-        <button class="btn btn-secondary" onclick="closePayModal()">Fermer</button>
-        <button class="btn btn-orange" onclick="submitPayment()">Envoyer la preuve</button>
+      <div id="payStatus" class="status-msg"></div>
+      <div class="modal-foot">
+        <button type="button" class="pill-btn" onclick="closeModal()">Fermer</button>
+        <button type="button" class="pill-btn pill-orange" onclick="sendPayment()">Valider</button>
       </div>
     </div>
   </div>
 
   <script>
-    const chatBox = document.getElementById("chatBox");
-    const promptInput = document.getElementById("promptInput");
+    const chatStream = document.getElementById("chatStream");
+    const promptBox = document.getElementById("promptBox");
     const fileInput = document.getElementById("fileInput");
 
-    function appendMessage(role, text, meta = "", imageDataUrl = "") {
-      const div = document.createElement("div");
-      div.className = `msg ${role}`;
-      div.textContent = text;
-      if (imageDataUrl) {
-        const img = document.createElement("img");
-        img.src = imageDataUrl;
-        img.alt = "Image générée par HAIDARA AI";
-        div.appendChild(img);
-      }
-      if (meta) {
-        const span = document.createElement("span");
-        span.className = "meta";
-        span.textContent = meta;
-        div.appendChild(span);
-      }
-      chatBox.appendChild(div);
-      chatBox.scrollTop = chatBox.scrollHeight;
-      return div;
+    function autoResize(el) {
+      el.style.height = "auto";
+      el.style.height = Math.min(el.scrollHeight, 140) + "px";
     }
 
-    function updateFileList() {
-      const files = Array.from(fileInput.files || []);
-      document.getElementById("fileList").textContent = files.length
-        ? files.map(f => f.name).join(", ")
-        : "Aucun fichier sélectionné";
-    }
-
-    function handleKey(e) {
+    function onKeyDown(e) {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        sendMessage();
+        sendChat();
       }
     }
 
-    async function sendMessage() {
-      const message = promptInput.value.trim();
+    function onFilesChange() {
       const files = Array.from(fileInput.files || []);
-      if (!message && files.length === 0) return;
+      const bar = document.getElementById("attachedBar");
+      const txt = document.getElementById("attachedText");
+      if (files.length) {
+        txt.textContent = files.map(f => f.name).join(", ");
+        bar.classList.add("visible");
+      } else {
+        txt.textContent = "";
+        bar.classList.remove("visible");
+      }
+    }
 
-      const label = files.length ? `${message || "Analyse de fichier"} [${files.length} fichier(s)]` : message;
-      appendMessage("user", label);
-      promptInput.value = "";
-
-      const loadingEl = appendMessage("ai", "HAIDARA AI réfléchit...");
-      const formData = new FormData();
-      formData.append("message", message);
-      files.forEach(f => formData.append("files", f));
-
+    function clearFiles() {
       fileInput.value = "";
-      updateFileList();
+      onFilesChange();
+    }
+
+    function addMsg(role, text, meta = "", imgSrc = "") {
+      const row = document.createElement("div");
+      row.className = `msg-row ${role}`;
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      bubble.textContent = text;
+      if (imgSrc) {
+        const img = document.createElement("img");
+        img.src = imgSrc;
+        img.alt = "Image générée";
+        bubble.appendChild(img);
+      }
+      row.appendChild(bubble);
+      if (meta) {
+        const m = document.createElement("div");
+        m.className = "msg-meta";
+        m.textContent = meta;
+        row.appendChild(m);
+      }
+      chatStream.appendChild(row);
+      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+      return row;
+    }
+
+    async function sendChat() {
+      const message = promptBox.value.trim();
+      const files = Array.from(fileInput.files || []);
+      if (!message && !files.length) return;
+
+      const shown = files.length ? `${message || "Analyse de fichier"} (${files.length} fichier(s))` : message;
+      addMsg("user", shown);
+      promptBox.value = "";
+      autoResize(promptBox);
+
+      const pending = addMsg("ai", "Réflexion en cours...");
+      const fd = new FormData();
+      fd.append("message", message);
+      files.forEach(f => fd.append("files", f));
+      clearFiles();
 
       try {
-        const res = await fetch("/api/chat", { method: "POST", body: formData });
+        const res = await fetch("/api/chat", { method: "POST", body: fd });
         const data = await res.json();
-        loadingEl.remove();
+        pending.remove();
         if (!res.ok) {
-          appendMessage("ai", "Erreur : " + (data.detail || "Impossible de répondre."));
+          addMsg("ai", "Erreur : " + (data.detail || "Réponse impossible."));
           return;
         }
-        appendMessage("ai", data.reply, `Modèle : ${data.model}`);
-      } catch (err) {
-        loadingEl.remove();
-        appendMessage("ai", "Erreur de connexion au serveur.");
+        addMsg("ai", data.reply, data.model || "");
+      } catch {
+        pending.remove();
+        addMsg("ai", "Erreur réseau.");
       }
     }
 
-    async function generateImage() {
-      const prompt = promptInput.value.trim();
+    async function generateImg() {
+      const prompt = promptBox.value.trim();
       if (!prompt) {
-        alert("Écris d'abord une description de l'image dans la zone de texte.");
+        promptBox.focus();
         return;
       }
-      appendMessage("user", "🎨 Générer une image : " + prompt);
-      promptInput.value = "";
+      addMsg("user", "Image : " + prompt);
+      promptBox.value = "";
+      autoResize(promptBox);
 
-      const loadingEl = appendMessage("ai", "Création de l'image en cours...");
-      const formData = new FormData();
-      formData.append("prompt", prompt);
+      const pending = addMsg("ai", "Création de l'image...");
+      const fd = new FormData();
+      fd.append("prompt", prompt);
 
       try {
-        const res = await fetch("/api/generate-image", { method: "POST", body: formData });
+        const res = await fetch("/api/generate-image", { method: "POST", body: fd });
         const data = await res.json();
-        loadingEl.remove();
+        pending.remove();
         if (!res.ok) {
-          appendMessage("ai", "Erreur image : " + (data.detail || "Échec de génération."));
+          addMsg("ai", "Erreur : " + (data.detail || "Génération impossible."));
           return;
         }
-        const dataUrl = `data:${data.mime_type || "image/png"};base64,${data.image_base64}`;
-        appendMessage("ai", "Voici ton image :", `Modèle : ${data.model}`, dataUrl);
-      } catch (err) {
-        loadingEl.remove();
-        appendMessage("ai", "Erreur réseau pendant la génération d'image.");
+        const src = `data:${data.mime_type || "image/png"};base64,${data.image_base64}`;
+        addMsg("ai", "Voici l'image générée :", data.model || "", src);
+      } catch {
+        pending.remove();
+        addMsg("ai", "Erreur réseau.");
       }
     }
 
-    function openPayModal() {
+    function openModal() {
       document.getElementById("payStatus").textContent = "";
       document.getElementById("payModal").classList.add("open");
     }
 
-    function closePayModal() {
+    function closeModal() {
       document.getElementById("payModal").classList.remove("open");
     }
 
-    async function submitPayment() {
+    async function sendPayment() {
       const phone = document.getElementById("payPhone").value.trim();
       const amount = document.getElementById("payAmount").value.trim();
       const reference = document.getElementById("payRef").value.trim();
       const plan = document.getElementById("payPlan").value;
-      const statusEl = document.getElementById("payStatus");
+      const status = document.getElementById("payStatus");
 
       if (!phone || !amount || !reference) {
-        statusEl.style.color = "#f87171";
-        statusEl.textContent = "Remplis tous les champs (numéro, montant et référence).";
+        status.style.color = "#dc2626";
+        status.textContent = "Remplis tous les champs.";
         return;
       }
 
-      statusEl.style.color = "#fbbf24";
-      statusEl.textContent = "Enregistrement en cours...";
+      status.style.color = "#475569";
+      status.textContent = "Envoi...";
 
       try {
         const res = await fetch("/api/payments/submit", {
@@ -236,21 +282,20 @@
         });
         const data = await res.json();
         if (!res.ok) {
-          statusEl.style.color = "#f87171";
-          statusEl.textContent = data.detail || "Erreur lors de l'envoi.";
+          status.style.color = "#dc2626";
+          status.textContent = data.detail || "Erreur d'envoi.";
           return;
         }
-        statusEl.style.color = "#4ade80";
-        statusEl.textContent = `Demande enregistrée (ID: ${data.payment.id}). Validation en cours !`;
+        status.style.color = "#16a34a";
+        status.textContent = `Enregistré (#${data.payment.id}).`;
         document.getElementById("payPhone").value = "";
         document.getElementById("payAmount").value = "";
         document.getElementById("payRef").value = "";
-      } catch (err) {
-        statusEl.style.color = "#f87171";
-        statusEl.textContent = "Erreur réseau.";
+      } catch {
+        status.style.color = "#dc2626";
+        status.textContent = "Erreur réseau.";
       }
     }
   </script>
 </body>
 </html>
-
