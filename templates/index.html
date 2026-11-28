@@ -6,96 +6,126 @@
   <title>HAIDARA AI</title>
   <style>
     * { box-sizing: border-box; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    body { margin: 0; background: #ffffff; color: #0f172a; display: flex; flex-direction: column; min-height: 100vh; }
-    header { position: sticky; top: 0; z-index: 20; background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(10px); border-bottom: 1px solid #e5e7eb; padding: 12px 18px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-    .brand { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; color: #0f172a; display: flex; align-items: center; gap: 8px; }
-    .brand-dot { width: 10px; height: 10px; border-radius: 999px; background: #111827; }
+    body { margin: 0; background: #ffffff; color: #1f1f1f; height: 100vh; display: flex; overflow: hidden; }
+
+    /* Barre latérale d'historique style Gemini */
+    .sidebar { width: 270px; background: #f8fafd; border-right: 1px solid #e4e7ec; display: flex; flex-direction: column; padding: 14px 12px; gap: 12px; flex-shrink: 0; transition: transform 0.2s ease; }
+    .sidebar-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .new-chat-btn { width: 100%; border: 1px solid #dde3ea; background: #ffffff; color: #1f1f1f; padding: 10px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; cursor: pointer; text-align: left; }
+    .new-chat-btn:hover { background: #eef2f6; }
+    .history-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; padding: 0 8px; }
+    .history-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+    .history-item { border: none; background: transparent; color: #334155; text-align: left; padding: 9px 12px; border-radius: 12px; font-size: 13px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .history-item:hover { background: #e9eef6; }
+    .history-item.active { background: #e3ecfa; color: #0b57d0; font-weight: 600; }
+
+    /* Zone principale */
+    .workspace { flex: 1; display: flex; flex-direction: column; min-width: 0; background: #ffffff; }
+    header { height: 58px; padding: 0 18px; border-bottom: 1px solid #edf0f4; display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #ffffff; }
+    .brand-left { display: flex; align-items: center; gap: 10px; }
+    .menu-btn { border: 1px solid #e2e8f0; background: #ffffff; color: #1f1f1f; width: 34px; height: 34px; border-radius: 10px; font-size: 16px; cursor: pointer; }
+    .brand { font-size: 17px; font-weight: 700; color: #1f1f1f; }
     .header-actions { display: flex; align-items: center; gap: 8px; }
-    .pill-btn { border: 1px solid #e5e7eb; background: #ffffff; color: #111827; padding: 7px 13px; border-radius: 999px; font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none; transition: background 0.15s, border-color 0.15s; }
-    .pill-btn:hover { background: #f9fafb; border-color: #d1d5db; }
+    .pill-btn { border: 1px solid #dde3ea; background: #ffffff; color: #1f1f1f; padding: 7px 13px; border-radius: 999px; font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: none; }
+    .pill-btn:hover { background: #f8fafd; }
     .pill-orange { border-color: #fed7aa; background: #fff7ed; color: #c2410c; }
-    .pill-orange:hover { background: #ffedd5; }
 
-    main { flex: 1; width: 100%; max-width: 780px; margin: 0 auto; padding: 20px 16px 28px; display: flex; flex-direction: column; gap: 18px; }
-    .chat-stream { flex: 1; display: flex; flex-direction: column; gap: 18px; padding-bottom: 12px; }
-    .welcome { text-align: center; padding: 36px 12px 16px; }
-    .welcome h1 { margin: 0 0 8px; font-size: 28px; font-weight: 700; letter-spacing: -0.03em; color: #0f172a; }
-    .welcome p { margin: 0; font-size: 15px; color: #64748b; }
+    .chat-area { flex: 1; overflow-y: auto; padding: 24px 16px; }
+    .chat-inner { max-width: 780px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+    .welcome { text-align: center; padding: 48px 12px 20px; }
+    .welcome h1 { margin: 0 0 8px; font-size: 30px; font-weight: 600; color: #0b57d0; }
+    .welcome p { margin: 0; font-size: 15px; color: #5f6368; }
 
-    .msg-row { display: flex; flex-direction: column; gap: 6px; }
+    .msg-row { display: flex; flex-direction: column; gap: 4px; }
     .msg-row.user { align-items: flex-end; }
     .msg-row.ai { align-items: flex-start; }
-    .bubble { max-width: 88%; padding: 12px 16px; border-radius: 20px; font-size: 15px; line-height: 1.55; white-space: pre-wrap; word-wrap: break-word; }
-    .msg-row.user .bubble { background: #f1f5f9; color: #0f172a; border-bottom-right-radius: 6px; }
-    .msg-row.ai .bubble { background: #ffffff; color: #0f172a; border: 1px solid #e5e7eb; border-bottom-left-radius: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .bubble { max-width: 86%; padding: 12px 16px; border-radius: 20px; font-size: 15px; line-height: 1.55; white-space: pre-wrap; word-wrap: break-word; }
+    .msg-row.user .bubble { background: #f0f4f9; color: #1f1f1f; border-bottom-right-radius: 6px; }
+    .msg-row.ai .bubble { background: #ffffff; color: #1f1f1f; border: 1px solid #e6e9ef; border-bottom-left-radius: 6px; }
     .bubble img { max-width: 100%; border-radius: 14px; margin-top: 10px; display: block; border: 1px solid #e5e7eb; }
-    .msg-meta { font-size: 11px; color: #94a3b8; padding: 0 6px; }
+    .msg-meta { font-size: 11px; color: #80868b; padding: 0 6px; }
 
-    .composer-wrap { position: sticky; bottom: 12px; background: #ffffff; border: 1px solid #d1d5db; border-radius: 24px; padding: 10px 14px; box-shadow: 0 6px 24px rgba(15, 23, 42, 0.06); display: flex; flex-direction: column; gap: 8px; }
-    .attached-bar { display: none; align-items: center; justify-content: space-between; gap: 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 6px 10px; font-size: 12px; color: #334155; }
+    /* Zone de saisie style Gemini + mention en bas */
+    .footer-box { padding: 8px 16px 12px; background: #ffffff; }
+    .footer-inner { max-width: 780px; margin: 0 auto; }
+    .composer { background: #f0f4f9; border: 1px solid #e2e8f0; border-radius: 26px; padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+    .composer:focus-within { background: #ffffff; border-color: #c2d7f8; box-shadow: 0 4px 16px rgba(11, 87, 208, 0.08); }
+    .attached-bar { display: none; align-items: center; justify-content: space-between; gap: 8px; background: #e9eef6; border-radius: 12px; padding: 6px 10px; font-size: 12px; color: #1f1f1f; }
     .attached-bar.visible { display: flex; }
-    .composer-top { display: flex; align-items: flex-end; gap: 8px; }
-    textarea { flex: 1; border: none; outline: none; background: transparent; color: #0f172a; font-size: 15px; line-height: 1.45; resize: none; max-height: 140px; min-height: 28px; padding: 4px 2px; }
-    .icon-btn { width: 36px; height: 36px; border-radius: 999px; border: 1px solid #e5e7eb; background: #ffffff; color: #334155; font-size: 16px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
-    .icon-btn:hover { background: #f8fafc; }
-    .send-btn { height: 36px; padding: 0 14px; border-radius: 999px; border: none; background: #111827; color: #ffffff; font-size: 13px; font-weight: 600; cursor: pointer; flex-shrink: 0; }
-    .send-btn:hover { background: #1f2937; }
-    .composer-bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding-top: 2px; }
-    .mode-btn { border: 1px solid #e5e7eb; background: #f8fafc; color: #334155; padding: 5px 11px; border-radius: 999px; font-size: 12px; font-weight: 600; cursor: pointer; }
-    .mode-btn:hover { background: #f1f5f9; }
+    .composer-main { display: flex; align-items: flex-end; gap: 8px; }
+    textarea { flex: 1; border: none; outline: none; background: transparent; color: #1f1f1f; font-size: 15px; line-height: 1.45; resize: none; max-height: 140px; min-height: 26px; padding: 4px; }
+    .icon-btn { width: 36px; height: 36px; border-radius: 999px; border: 1px solid #dce3ec; background: #ffffff; color: #1f1f1f; font-size: 17px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .send-btn { height: 36px; padding: 0 15px; border-radius: 999px; border: none; background: #0b57d0; color: #ffffff; font-size: 13px; font-weight: 600; cursor: pointer; flex-shrink: 0; }
+    .composer-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .tool-btn { border: 1px solid #dce3ec; background: #ffffff; color: #1f1f1f; padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .disclaimer { text-align: center; font-size: 12px; color: #5f6368; margin-top: 8px; }
     input[type="file"] { display: none; }
 
-    .modal-bg { display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); z-index: 50; align-items: center; justify-content: center; padding: 16px; }
+    /* Modal Orange Money */
+    .modal-bg { display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); z-index: 60; align-items: center; justify-content: center; padding: 16px; }
     .modal-bg.open { display: flex; }
-    .modal-card { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 20px; width: 100%; max-width: 420px; padding: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.12); }
-    .modal-card h3 { margin: 0 0 6px; font-size: 18px; color: #0f172a; }
+    .modal-card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; width: 100%; max-width: 420px; padding: 20px; }
+    .modal-card h3 { margin: 0 0 6px; font-size: 18px; }
     .modal-card p { margin: 0 0 14px; font-size: 13px; color: #64748b; }
     .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
     .field label { font-size: 12px; font-weight: 600; color: #334155; }
-    .field input, .field select { border: 1px solid #cbd5e1; border-radius: 10px; padding: 9px 11px; font-size: 14px; color: #0f172a; background: #ffffff; }
+    .field input, .field select { border: 1px solid #cbd5e1; border-radius: 10px; padding: 9px 11px; font-size: 14px; }
     .modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
-    .status-msg { font-size: 13px; margin-top: 8px; font-weight: 500; }
+    .status-msg { font-size: 13px; margin-top: 6px; font-weight: 500; }
+
+    @media (max-width: 768px) {
+      .sidebar { position: fixed; top: 0; bottom: 0; left: 0; z-index: 40; transform: translateX(-100%); }
+      .sidebar.open { transform: translateX(0); }
+    }
   </style>
 </head>
 <body>
-  <header>
-    <div class="brand">
-      <span class="brand-dot"></span>
-      <span>HAIDARA AI</span>
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-top">
+      <button type="button" class="new-chat-btn" onclick="startNewChat()">+ Nouvelle discussion</button>
     </div>
-    <div class="header-actions">
-      <button class="pill-btn pill-orange" onclick="openModal()">Orange Money</button>
-      <a href="/admin" class="pill-btn">Admin</a>
-    </div>
-  </header>
+    <div class="history-label">Historique</div>
+    <div id="historyList" class="history-list"></div>
+  </aside>
 
-  <main>
-    <div id="chatStream" class="chat-stream">
-      <div class="welcome">
-        <h1>Comment puis-je t'aider ?</h1>
-        <p>Pose une question, joins un fichier ou génère une image.</p>
+  <div class="workspace">
+    <header>
+      <div class="brand-left">
+        <button type="button" class="menu-btn" onclick="toggleSidebar()" title="Historique">☰</button>
+        <div class="brand">HAIDARA AI</div>
+      </div>
+      <div class="header-actions">
+        <button type="button" class="pill-btn pill-orange" onclick="openModal()">Orange Money</button>
+        <a href="/admin" class="pill-btn">Admin</a>
+      </div>
+    </header>
+
+    <div id="chatArea" class="chat-area">
+      <div id="chatInner" class="chat-inner"></div>
+    </div>
+
+    <div class="footer-box">
+      <div class="footer-inner">
+        <div class="composer">
+          <div id="attachedBar" class="attached-bar">
+            <span id="attachedText"></span>
+            <button type="button" class="tool-btn" onclick="clearFiles()">Retirer</button>
+          </div>
+          <div class="composer-main">
+            <label class="icon-btn" for="fileInput" title="Joindre un fichier">+</label>
+            <input id="fileInput" type="file" multiple accept="image/*,.pdf,.txt,.csv,.md,.py,.js,.html" onchange="onFilesChange()" />
+            <textarea id="promptBox" rows="1" placeholder="Demande à HAIDARA AI..." oninput="autoResize(this)" onkeydown="onKeyDown(event)"></textarea>
+            <button id="sendBtn" type="button" class="send-btn" onclick="sendChat()">Envoyer</button>
+          </div>
+          <div class="composer-tools">
+            <button type="button" class="tool-btn" onclick="generateImg()">Créer une image</button>
+            <span style="font-size:11px; color:#5f6368;">Entrée pour envoyer</span>
+          </div>
+        </div>
+        <div class="disclaimer">HAIDARA AI peut se tromper.</div>
       </div>
     </div>
-
-    <div class="composer-wrap">
-      <div id="attachedBar" class="attached-bar">
-        <span id="attachedText"></span>
-        <button type="button" class="mode-btn" onclick="clearFiles()">Retirer</button>
-      </div>
-
-      <div class="composer-top">
-        <label class="icon-btn" for="fileInput" title="Joindre un fichier">+</label>
-        <input id="fileInput" type="file" multiple accept="image/*,.pdf,.txt,.csv,.md,.py,.js,.html" onchange="onFilesChange()" />
-        <textarea id="promptBox" rows="1" placeholder="Demande à HAIDARA AI..." oninput="autoResize(this)" onkeydown="onKeyDown(event)"></textarea>
-        <button id="sendBtn" class="send-btn" onclick="sendChat()">Envoyer</button>
-      </div>
-
-      <div class="composer-bottom">
-        <button type="button" class="mode-btn" onclick="generateImg()">Créer une image</button>
-        <span style="font-size:11px; color:#94a3b8;">Entrée pour envoyer · Maj+Entrée pour nouvelle ligne</span>
-      </div>
-    </div>
-  </main>
+  </div>
 
   <div id="payModal" class="modal-bg">
     <div class="modal-card">
@@ -111,7 +141,7 @@
       </div>
       <div class="field">
         <label>Numéro Orange Money</label>
-        <input id="payPhone" type="text" placeholder="Ex: 620 00 00 00" />
+        <input id="payPhone" type="text" placeholder="Ex: +224629600906" />
       </div>
       <div class="field">
         <label>Montant</label>
@@ -119,7 +149,7 @@
       </div>
       <div class="field">
         <label>Référence de transaction</label>
-        <input id="payRef" type="text" placeholder="Ex: PP261128.0725.A12345" />
+        <input id="payRef" type="text" placeholder="Ex: PP261128.0820.A12345" />
       </div>
       <div id="payStatus" class="status-msg"></div>
       <div class="modal-foot">
@@ -130,9 +160,128 @@
   </div>
 
   <script>
-    const chatStream = document.getElementById("chatStream");
-    const promptBox = document.getElementById("promptBox");
-    const fileInput = document.getElementById("fileInput");
+    const STORAGE_KEY = "haidara_ai_chats_v1";
+    let sessions = loadSessions();
+    let activeId = sessions[0]?.id || createSession().id;
+
+    function loadSessions() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function saveSessions() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+    }
+
+    function createSession() {
+      const s = {
+        id: "chat_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+        title: "Nouvelle discussion",
+        messages: []
+      };
+      sessions.unshift(s);
+      saveSessions();
+      return s;
+    }
+
+    function getActiveSession() {
+      return sessions.find(s => s.id === activeId) || sessions[0] || createSession();
+    }
+
+    function startNewChat() {
+      const s = createSession();
+      activeId = s.id;
+      renderAll();
+      if (window.innerWidth <= 768) {
+        document.getElementById("sidebar").classList.remove("open");
+      }
+    }
+
+    function selectChat(id) {
+      activeId = id;
+      renderAll();
+      if (window.innerWidth <= 768) {
+        document.getElementById("sidebar").classList.remove("open");
+      }
+    }
+
+    function toggleSidebar() {
+      document.getElementById("sidebar").classList.toggle("open");
+    }
+
+    function renderHistory() {
+      const list = document.getElementById("historyList");
+      list.innerHTML = "";
+      sessions.forEach(s => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "history-item" + (s.id === activeId ? " active" : "");
+        btn.textContent = s.title || "Discussion";
+        btn.onclick = () => selectChat(s.id);
+        list.appendChild(btn);
+      });
+    }
+
+    function renderMessages() {
+      const chatInner = document.getElementById("chatInner");
+      const current = getActiveSession();
+      chatInner.innerHTML = "";
+
+      if (!current.messages.length) {
+        chatInner.innerHTML = `
+          <div class="welcome">
+            <h1>Bonjour, comment puis-je t'aider ?</h1>
+            <p>Pose une question, joins un fichier ou génère une image.</p>
+          </div>
+        `;
+        return;
+      }
+
+      current.messages.forEach(m => {
+        const row = document.createElement("div");
+        row.className = `msg-row ${m.role}`;
+        const bubble = document.createElement("div");
+        bubble.className = "bubble";
+        bubble.textContent = m.text || "";
+        if (m.imgSrc) {
+          const img = document.createElement("img");
+          img.src = m.imgSrc;
+          img.alt = "Image générée";
+          bubble.appendChild(img);
+        }
+        row.appendChild(bubble);
+        if (m.meta) {
+          const meta = document.createElement("div");
+          meta.className = "msg-meta";
+          meta.textContent = m.meta;
+          row.appendChild(meta);
+        }
+        chatInner.appendChild(row);
+      });
+
+      const area = document.getElementById("chatArea");
+      area.scrollTop = area.scrollHeight;
+    }
+
+    function renderAll() {
+      renderHistory();
+      renderMessages();
+    }
+
+    function appendMessage(role, text, meta = "", imgSrc = "") {
+      const current = getActiveSession();
+      if (role === "user" && current.title === "Nouvelle discussion" && text) {
+        current.title = text.slice(0, 38);
+      }
+      current.messages.push({ role, text, meta, imgSrc });
+      saveSessions();
+      renderAll();
+    }
 
     function autoResize(el) {
       el.style.height = "auto";
@@ -147,7 +296,7 @@
     }
 
     function onFilesChange() {
-      const files = Array.from(fileInput.files || []);
+      const files = Array.from(document.getElementById("fileInput").files || []);
       const bar = document.getElementById("attachedBar");
       const txt = document.getElementById("attachedText");
       if (files.length) {
@@ -160,45 +309,27 @@
     }
 
     function clearFiles() {
-      fileInput.value = "";
+      document.getElementById("fileInput").value = "";
       onFilesChange();
     }
 
-    function addMsg(role, text, meta = "", imgSrc = "") {
-      const row = document.createElement("div");
-      row.className = `msg-row ${role}`;
-      const bubble = document.createElement("div");
-      bubble.className = "bubble";
-      bubble.textContent = text;
-      if (imgSrc) {
-        const img = document.createElement("img");
-        img.src = imgSrc;
-        img.alt = "Image générée";
-        bubble.appendChild(img);
-      }
-      row.appendChild(bubble);
-      if (meta) {
-        const m = document.createElement("div");
-        m.className = "msg-meta";
-        m.textContent = meta;
-        row.appendChild(m);
-      }
-      chatStream.appendChild(row);
-      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
-      return row;
-    }
-
     async function sendChat() {
-      const message = promptBox.value.trim();
+      const box = document.getElementById("promptBox");
+      const fileInput = document.getElementById("fileInput");
+      const message = box.value.trim();
       const files = Array.from(fileInput.files || []);
       if (!message && !files.length) return;
 
       const shown = files.length ? `${message || "Analyse de fichier"} (${files.length} fichier(s))` : message;
-      addMsg("user", shown);
-      promptBox.value = "";
-      autoResize(promptBox);
+      appendMessage("user", shown);
+      box.value = "";
+      autoResize(box);
 
-      const pending = addMsg("ai", "Réflexion en cours...");
+      const current = getActiveSession();
+      current.messages.push({ role: "ai", text: "Réflexion en cours...", meta: "", imgSrc: "" });
+      renderMessages();
+      const tempIndex = current.messages.length - 1;
+
       const fd = new FormData();
       fd.append("message", message);
       files.forEach(f => fd.append("files", f));
@@ -207,45 +338,58 @@
       try {
         const res = await fetch("/api/chat", { method: "POST", body: fd });
         const data = await res.json();
-        pending.remove();
+        current.messages.splice(tempIndex, 1);
         if (!res.ok) {
-          addMsg("ai", "Erreur : " + (data.detail || "Réponse impossible."));
-          return;
+          current.messages.push({ role: "ai", text: "Erreur : " + (data.detail || "Réponse impossible."), meta: "" });
+        } else {
+          current.messages.push({ role: "ai", text: data.reply, meta: data.model || "" });
         }
-        addMsg("ai", data.reply, data.model || "");
+        saveSessions();
+        renderAll();
       } catch {
-        pending.remove();
-        addMsg("ai", "Erreur réseau.");
+        current.messages.splice(tempIndex, 1);
+        current.messages.push({ role: "ai", text: "Erreur réseau.", meta: "" });
+        saveSessions();
+        renderAll();
       }
     }
 
     async function generateImg() {
-      const prompt = promptBox.value.trim();
+      const box = document.getElementById("promptBox");
+      const prompt = box.value.trim();
       if (!prompt) {
-        promptBox.focus();
+        box.focus();
         return;
       }
-      addMsg("user", "Image : " + prompt);
-      promptBox.value = "";
-      autoResize(promptBox);
+      appendMessage("user", "Image : " + prompt);
+      box.value = "";
+      autoResize(box);
 
-      const pending = addMsg("ai", "Création de l'image...");
+      const current = getActiveSession();
+      current.messages.push({ role: "ai", text: "Création de l'image...", meta: "", imgSrc: "" });
+      renderMessages();
+      const tempIndex = current.messages.length - 1;
+
       const fd = new FormData();
       fd.append("prompt", prompt);
 
       try {
         const res = await fetch("/api/generate-image", { method: "POST", body: fd });
         const data = await res.json();
-        pending.remove();
+        current.messages.splice(tempIndex, 1);
         if (!res.ok) {
-          addMsg("ai", "Erreur : " + (data.detail || "Génération impossible."));
-          return;
+          current.messages.push({ role: "ai", text: "Erreur : " + (data.detail || "Génération impossible."), meta: "" });
+        } else {
+          const src = `data:${data.mime_type || "image/png"};base64,${data.image_base64}`;
+          current.messages.push({ role: "ai", text: "Voici l'image générée :", meta: data.model || "", imgSrc: src });
         }
-        const src = `data:${data.mime_type || "image/png"};base64,${data.image_base64}`;
-        addMsg("ai", "Voici l'image générée :", data.model || "", src);
+        saveSessions();
+        renderAll();
       } catch {
-        pending.remove();
-        addMsg("ai", "Erreur réseau.");
+        current.messages.splice(tempIndex, 1);
+        current.messages.push({ role: "ai", text: "Erreur réseau.", meta: "" });
+        saveSessions();
+        renderAll();
       }
     }
 
@@ -296,6 +440,8 @@
         status.textContent = "Erreur réseau.";
       }
     }
+
+    renderAll();
   </script>
 </body>
 </html>
